@@ -1,6 +1,6 @@
 import {createCanvas, loadImage} from "https://deno.land/x/canvas@v1.4.2/mod.ts";
 import {compressionDebug, colorToId, mastTileKeys, cityData, openBorders} from './lookups.ts';
-import {xy, rawData, targ, targArr, res, resArr, resArrArr, latLon, retObj} from "./types.ts";
+import {xy, rawData, targ, targArr, res, resArr, resArrArr, latLon, retObj, reqStat} from "./types.ts";
 
 // Use a cache as prime location tiles will be hit a lot
 // This speeds up the response and reduces calls to Github

@@ -3,8 +3,8 @@ Delivers [metro city](https://github.com/cafread/metrocity2024) bulk results, us
 Can respond to one request per call or hundreds of thousands, utilising cache to reduce resource calls and execution time.  
 Written in TypeScript for [Deno 2](https://deno.com/blog/v2.0).
 
-## Expects
-Serves on `0.0.0.0:3000` (0.0.0.0 for Docker, can serve on 127.0.0.1).  
+## How to use it
+For testing, an edge service is available: `https://metro-city.deno.dev/`  
 `POST` request using the `/mc_api` route.  
 Requires the header `Content-Type: application/json`  
 Request body should be an array with elements `{"id": strInt, "lat": number, "lon": number, "cc"?: string}`  
@@ -23,7 +23,7 @@ The unique `id` property is the same as that provided in the request, a string o
 `/info`     links here where the documentation resides  
 `/version`  returns version information
 
-## Running
+## Running locally
 With Deno installed, from the repository folder execute:  
 `deno run --allow-net --watch server.ts`  
 Use [postman](https://www.postman.com/) or [hoppscotch](https://hoppscotch.io/), to send a post request as detailed above.
