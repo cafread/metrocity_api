@@ -19,8 +19,8 @@ The unique `id` property is the same as that provided in the request, a string o
 
 ## GET request routes
 `/cache`    count of the cached tiles  
-`/status`   OK if the server is running  
-`/info`     links here where the docuementation resides  
+`/status`   returns uptime if the server is running  
+`/info`     links here where the documentation resides  
 `/version`  returns version information
 
 ## Running

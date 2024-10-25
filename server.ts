@@ -1,7 +1,7 @@
 
 import {resArr, resArrArr, retObj} from "./types.ts";
 import {testData} from "./lookups.ts";
-import {resFmt, prepData, readTile, countCache} from "./functions.ts";
+import {resFmt, prepData, readTile, countCache, status} from "./functions.ts";
 
 Deno.serve({port: 3000, hostname: "127.0.0.1"}, async (request: Request) => {
     if (request.method == "POST") {
@@ -27,7 +27,7 @@ Deno.serve({port: 3000, hostname: "127.0.0.1"}, async (request: Request) => {
     } if (request.method === "GET") {
         const url = new URL(request.url);
         if (url.pathname === "/cache")   return new Response(countCache(),                               {status: 200});
-        if (url.pathname === "/status")  return new Response("OK",                                       {status: 200});
+        if (url.pathname === "/status")  return new Response(status(),                                   {status: 200});
         if (url.pathname === "/info")    return new Response("https://github.com/cafread/metrocity_api", {status: 200});
         if (url.pathname === "/version") return new Response("Release candidate 1.1",                    {status: 200});
         return new Response("Unknown route", {status: 501});

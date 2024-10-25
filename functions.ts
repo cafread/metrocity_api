@@ -5,6 +5,8 @@ import {xy, rawData, targ, targArr, res, resArr, resArrArr, latLon, retObj} from
 // Use a cache as prime location tiles will be hit a lot
 // This speeds up the response and reduces calls to Github
 const cache: {[index: string]: Uint8ClampedArray} = {};
+let servCount: number = 0;
+const startTs: number = Math.floor((new Date()).getTime() / 1000) - 10000;
 
 export async function readTile (tileKey: string, locations: targArr): Promise<resArr> {
     if (mastTileKeys.indexOf(tileKey) === -1) return locations.map(t => ({"id": t.id, "mc": ''}));
@@ -54,11 +56,21 @@ export function prepData (rawData: rawData): {[index: string]: targArr} {
 export function resFmt (arr: resArrArr): retObj {
     const result: retObj = {};
     for (const rA of arr) for (const r of rA) result[r.id] = r.mc;
+    servCount += Object.keys(result).length;
     return result;
 }
 
 export function countCache (): string {
     return "Cached " + Object.keys(cache).length.toString() + " of " + mastTileKeys.length + " tiles";
+}
+
+export function status (): string {
+    const upTim = Math.floor((new Date()).getTime() / 1000) - startTs
+    const upDay = (Math.floor((upTim/(60*60*24)))).toString();
+    const upHrs = (Math.floor((upTim/(60*60)) % 24)).toString();
+    const upMin = (Math.floor(upTim / 60) % 60).toString();
+    const upSec = (upTim % 60).toString();
+    return 'Server has been up for ' + upDay + ' days, ' + upHrs + ' hours, ' + upMin + ' minutes, ' + upSec + ' seconds';
 }
 
 function mercator (loc: latLon): xy {
