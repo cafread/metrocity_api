@@ -1,16 +1,16 @@
 
 import {resArr, resArrArr, retObj} from "./types.ts";
 import {testData} from "./lookups.ts";
-import {resFmt, prepData, readTile} from "./functions.ts";
+import {resFmt, prepData, readTile, countCache} from "./functions.ts";
 
 Deno.serve({port: 3000, hostname: "127.0.0.1"}, async (request: Request) => {
     if (request.method == "POST") {
         const url = new URL(request.url);
-        if (url.pathname !== '/mc_api') return new Response("Unknown route", {status: 501});
+        if (url.pathname !== "/mc_api") return new Response("Unknown route", {status: 501});
         const inpData: JSON = await request.json();
         // Assert that the request payload is appropriate
         if (!Array.isArray(inpData))                                                       return new Response("Request is not array",   {status: 501});
-        if (!inpData.every(x => typeof x === 'object' && !Array.isArray(x) && x !== null)) return new Response("Invalid request data",   {status: 501});
+        if (!inpData.every(x => typeof x === "object" && !Array.isArray(x) && x !== null)) return new Response("Invalid request data",   {status: 501});
         if (!inpData.every(e => e.id && e.lat && e.lon && Object.keys(e).length <= 4))     return new Response("Invalid request data",   {status: 501});
         if (!inpData.every(e => Math.abs(e.lat) <= 85.0511287798066))                      return new Response("Out of bounds latitude", {status: 501});
         // Assert that id is unique
@@ -24,7 +24,14 @@ Deno.serve({port: 3000, hostname: "127.0.0.1"}, async (request: Request) => {
         let result: retObj = {};
         await Promise.all(readPromises).then((values: resArrArr) => result = resFmt(values));
         return new Response(JSON.stringify(result), {"status": 200, headers: {"content-type": "application/json"}});
+    } if (request.method === "GET") {
+        const url = new URL(request.url);
+        if (url.pathname === "/cache")   return new Response(countCache(),                               {status: 200});
+        if (url.pathname === "/status")  return new Response("OK",                                       {status: 200});
+        if (url.pathname === "/info")    return new Response("https://github.com/cafread/metrocity_api", {status: 200});
+        if (url.pathname === "/version") return new Response("Release candidate 1.1",                    {status: 200});
+        return new Response("Unknown route", {status: 501});
     } else {
-        return new Response("Only accepting post reqests", {status: 501});
+        return new Response("Reqest type not accepted", {status: 501});
     }
 });

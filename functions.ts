@@ -57,6 +57,10 @@ export function resFmt (arr: resArrArr): retObj {
     return result;
 }
 
+export function countCache (): string {
+    return "Cached " + Object.keys(cache).length.toString() + " of " + mastTileKeys.length + " tiles";
+}
+
 function mercator (loc: latLon): xy {
     const mapDim: number = 32768; // 256 pixels * 128 tiles
     if (Math.abs(loc.lat) > 85.0511287798066) return [NaN, NaN]; // Assert latitude limits
