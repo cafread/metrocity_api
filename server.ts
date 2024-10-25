@@ -3,7 +3,10 @@ import {resArr, resArrArr, retObj} from "./types.ts";
 import {testData} from "./lookups.ts";
 import {resFmt, prepData, readTile, countCache, status} from "./functions.ts";
 
-Deno.serve({port: 3000, hostname: "127.0.0.1"}, async (request: Request) => {
+const servePort: number = 3000;
+const servIP: string = "0.0.0.0";
+
+Deno.serve({port: servePort, hostname: servIP}, async (request: Request) => {
     if (request.method == "POST") {
         const url = new URL(request.url);
         if (url.pathname !== "/mc_api") return new Response("Unknown route", {status: 501});

@@ -4,7 +4,7 @@ Can respond to one request per call or hundreds of thousands, utilising cache to
 Written in TypeScript for [Deno 2](https://deno.com/blog/v2.0).
 
 ## Expects
-Serves on `127.0.0.1:3000` (set in the Docker image for production).  
+Serves on `0.0.0.0:3000` (0.0.0.0 for Docker, can serve on 127.0.0.1).  
 `POST` request using the `/mc_api` route.  
 Requires the header `Content-Type: application/json`  
 Request body should be an array with elements `{"id": strInt, "lat": number, "lon": number, "cc"?: string}`  
@@ -19,7 +19,7 @@ The unique `id` property is the same as that provided in the request, a string o
 
 ## GET request routes
 `/cache`    count of the cached tiles  
-`/status`   returns uptime if the server is running  
+`/status`   returns uptime and usage if the server is running  
 `/info`     links here where the documentation resides  
 `/version`  returns version information
 
