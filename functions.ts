@@ -1,6 +1,7 @@
 import {createCanvas, loadImage} from "https://deno.land/x/canvas@v1.4.2/mod.ts";
 import {compressionDebug, colorToId, mastTileKeys, cityData, openBorders} from './lookups.ts';
-import {xy, rawData, targ, targArr, res, resArr, resArrArr, latLon, retObj, reqStat} from "./types.ts";
+import {xy, rawData, targ, targArr, res, resArr, resArrArr, latLon, retObj} from "./types.ts";
+import {equals} from "https://deno.land/std/bytes/mod.ts";
 
 // Use a cache as prime location tiles will be hit a lot
 // This speeds up the response and reduces calls to Github
@@ -141,14 +142,19 @@ function validateBorder (cc: string, mc_cc: string, res: res): res {
 // Helper function to handle incoming GitHub webhook payload
 export async function handleGithubWebhook(req: Request): Promise<Response> {
     console.log("Potential tile update, checking for changes");
-    const payload = await req.json();
+    const body = new Uint8Array(await req.arrayBuffer());
+    if (!(await verifySignature(req, body))) {
+        console.log("Invalid signature, request denied.");
+        return new Response("Unauthorized", {status: 401});
+    }
+    console.log("Signature verified, proceeding");
+    const payload = JSON.parse(new TextDecoder().decode(body));
     const updatedFiles = new Set<string>();
-    // Check modified files in the push payload
     for (const commit of payload.commits) {
         for (const file of commit.modified) {
             if (file.startsWith("tiles/") && file.endsWith(".png")) {
-                const fileName = file.split("/").pop()!;
-                updatedFiles.add(fileName);
+            const fileName = file.split("/").pop()!;
+            updatedFiles.add(fileName);
             }
         }
     }
@@ -160,4 +166,24 @@ export async function handleGithubWebhook(req: Request): Promise<Response> {
         }
     }
     return new Response("Webhook processed", {status: 200});
+}
+
+// Function to verify the GitHub signature using HMAC SHA-256
+const SECRET = Deno.env.get("auth") || "";
+async function verifySignature(req: Request, body: Uint8Array): Promise<boolean> {
+    const signature = req.headers.get("X-Hub-Signature-256");
+    if (!signature || !SECRET) return false;
+    // Generate the HMAC SHA-256 hash of the body using the secret
+    const key = await crypto.subtle.importKey(
+        "raw",
+        new TextEncoder().encode(SECRET),
+        {name: "HMAC", hash: "SHA-256"},
+        false,
+        ["sign"]
+    );
+    const hashBuffer = await crypto.subtle.sign("HMAC", key, body);
+    const hashArray = new Uint8Array(hashBuffer);
+    const digest = `sha256=${Array.from(hashArray).map(b => b.toString(16).padStart(2, '0')).join('')}`;
+    // Check if the calculated digest matches the GitHub signature
+    return equals(new TextEncoder().encode(digest), new TextEncoder().encode(signature));
 }
