@@ -1,7 +1,6 @@
 
 import {reqStat} from "./types.ts";
-import {cache50} from "./lookups.ts";
-import {handleMcRequest, readTile, countCache, status, handleGithubWebhook} from "./functions.ts";
+import {handleMcRequest, countCache, status, handleGithubWebhook} from "./functions.ts";
 
 const servePort: number = 3000;
 const servIP: string = "0.0.0.0";
