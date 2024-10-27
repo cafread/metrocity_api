@@ -121,7 +121,8 @@ export async function handleGithubWebhook(req: Request): Promise<Response> {
     }
     // Remove updated files from cache
     for (const tileKey of updatedFiles) {
-        for (let i = 0; i < 8; i++) kv.delete(["tile", tileKey, i]);
+        //for (let i = 0; i < 8; i++) kv.delete(["tile", tileKey, i]);
+        delete cache[tileKey];
         console.log(`Cache cleared for updated tile: ${tileKey}`);
     }
     return new Response("Webhook processed", {status: 200});
