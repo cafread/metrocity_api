@@ -82,9 +82,13 @@ export function resFmt (arr: resArrArr): retObj {
 }
 
 export async function countCache (): Promise<string> {
-    const cachedTiles = await kv.list({prefix: ["tile"]});
-    // May need to filter for those which dow have values
-    return "Cached " + (Object.keys(cachedTiles).length / 8).toString() + " of " + mastTileKeys.length + " tiles";
+    const cachedTiles = kv.list({prefix: ["tile"]});
+    let cacheCount = 0;
+    for await (const entry of cachedTiles) {
+        console.log(entry.key);
+        if (entry.key[2] === 0) cacheCount++;
+    }
+    return `Cached ${cacheCount} of ${mastTileKeys.length} tiles`;
 }
 
 export function status (): string {
