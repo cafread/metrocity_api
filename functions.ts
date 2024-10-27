@@ -4,8 +4,11 @@ import {xy, rawData, targ, targArr, resArr, resArrArr, retObj, reqStat} from "./
 import {mercator, genTileKey, rgbToId, makeUrl, validateBorder} from "./geo_functions.ts";
 import {equals} from "https://deno.land/std/bytes/mod.ts";
 
-const kv = await Deno.openKv();
 const startTs: number = (new Date()).getTime() / 1000;
+// Use a cache as prime location tiles will be hit a lot
+// This speeds up the response and reduces calls to Github
+// This seems to work better than using Deno KV for now and also avoids the value length limits
+const cache: {[index: string]: Uint8ClampedArray} = {};
 
 export async function handleMcRequest (request: Request, thisReq: reqStat): Promise<Response> {
     const inpData: JSON = await request.json();
@@ -33,9 +36,8 @@ export async function handleMcRequest (request: Request, thisReq: reqStat): Prom
 export async function readTile (tileKey: string, locations: targArr): Promise<resArr> {
     if (mastTileKeys.indexOf(tileKey) === -1) return locations.map(t => ({"id": t.id, "mc": ''}));
     let tileData: Uint8ClampedArray;
-    const entry = await kv.get<Uint8ClampedArray>(["tile", tileKey, 0]); // Only need to check for the first slice existing
-    if (entry.value) { // If available, read from cache
-        tileData = await readTileKv(tileKey);
+    if (cache[tileKey]) {
+        tileData = cache[tileKey];
     } else {
         const url = makeUrl(tileKey);
         const cvs = createCanvas(256, 256);
@@ -43,7 +45,7 @@ export async function readTile (tileKey: string, locations: targArr): Promise<re
         const image = await loadImage(url);
         ctx.drawImage(image, 0, 0);
         tileData = ctx.getImageData(0, 0, 256, 256).data;
-        storeTileKv(tileKey, tileData);
+        cache[tileKey] = tileData;
     }
     return locations.map(loc => {
         const spl = (loc.y * 256 + loc.x) * 4; // Locate data
@@ -81,10 +83,8 @@ export function resFmt (arr: resArrArr): retObj {
     return result;
 }
 
-export async function countCache (): Promise<string> {
-    const cachedTiles = await kv.list({prefix: ["tile"]});
-    // May need to filter for those which dow have values
-    return "Cached " + (Object.keys(cachedTiles).length / 8).toString() + " of " + mastTileKeys.length + " tiles";
+export function countCache (): string {
+    return `Cached ${Object.keys(cache).length} of ${mastTileKeys.length} tiles`;
 }
 
 export function status (): string {
@@ -126,33 +126,6 @@ export async function handleGithubWebhook(req: Request): Promise<Response> {
     }
     return new Response("Webhook processed", {status: 200});
 }
-
-// Deno kv values are limited to a length of 65536 bytes
-function storeTileKv (tileKey: string, tileData: Uint8ClampedArray) {
-    const sliceLen = 256 * 256 * 4 / 8;
-    for (let i = 0; i < 8; i++) {
-        const readPoint = i * 256 * 256 * 4 / 8;
-        const sliceData = tileData.slice(readPoint, readPoint + sliceLen);
-        kv.set(["tile", tileKey, i], sliceData);
-    }
-}
-
-async function readTileKv (tileKey: string): Promise<Uint8ClampedArray> {
-    const fullArray = new Uint8ClampedArray(256 * 256 * 4);
-    const sliceLen = 256 * 256 * 4 / 8;
-    for (let i = 0; i < 8; i++) {
-        const sliceData = await kv.get<ArrayBuffer>(["tile", tileKey, i]);
-        if (sliceData.value !== null) {
-            const sliceArray = new Uint8ClampedArray(sliceData.value);
-            fullArray.set(sliceArray, i * sliceLen);
-        } else {
-            console.log(`Data for tile slice${i} on ${tileKey} not found`);
-        }
-    }
-    return fullArray;
-}
-
-
 
 // Function to verify the GitHub signature using HMAC SHA-256
 const SECRET = Deno.env.get("auth") || "";

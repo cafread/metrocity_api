@@ -1,6 +1,7 @@
 
 import {reqStat} from "./types.ts";
-import {handleMcRequest, countCache, status, handleGithubWebhook} from "./functions.ts";
+import {handleMcRequest, countCache, status, handleGithubWebhook, readTile} from "./functions.ts";
+import {cache50} from "./lookups.ts"
 
 const servePort: number = 3000;
 const servIP: string = "0.0.0.0";
@@ -44,3 +45,6 @@ Deno.serve({port: servePort, hostname: servIP}, async (request: Request) => {
         return new Response("Reqest type not accepted", {status: 501});
     }
 });
+
+// Cache the data for the top 50 tiles
+for (const tileKey of cache50) readTile(tileKey, []);
