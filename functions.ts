@@ -1,21 +1,41 @@
 import {createCanvas, loadImage} from "https://deno.land/x/canvas@v1.4.2/mod.ts";
-import {compressionDebug, colorToId, mastTileKeys, cityData, openBorders} from './lookups.ts';
-import {xy, rawData, targ, targArr, res, resArr, resArrArr, latLon, retObj} from "./types.ts";
+import {mastTileKeys, cityData, testData} from './lookups.ts';
+import {xy, rawData, targ, targArr, resArr, resArrArr, retObj, reqStat} from "./types.ts";
+import {mercator, genTileKey, rgbToId, makeUrl, validateBorder} from "./geo_functions.ts";
 import {equals} from "https://deno.land/std/bytes/mod.ts";
 
-// Use a cache as prime location tiles will be hit a lot
-// This speeds up the response and reduces calls to Github
-const cache: {[index: string]: Uint8ClampedArray} = {};
-let servCount: number = 0;
-let reqCount: number = 0;
+const kv = await Deno.openKv();
 const startTs: number = (new Date()).getTime() / 1000;
+
+export async function handleMcRequest (request: Request, thisReq: reqStat): Promise<Response> {
+    const inpData: JSON = await request.json();
+    // Assert that the request payload is appropriate
+    if (!Array.isArray(inpData))                                                       return new Response("Request is not array",   {status: 501});
+    if (!inpData.every(x => typeof x === "object" && !Array.isArray(x) && x !== null)) return new Response("Invalid request data",   {status: 501});
+    if (!inpData.every(e => e.id && e.lat && e.lon && Object.keys(e).length <= 4))     return new Response("Invalid request data",   {status: 501});
+    if (!inpData.every(e => Math.abs(e.lat) <= 85.0511287798066))                      return new Response("Out of bounds latitude", {status: 501});
+    // Assert that id is unique
+    if (inpData.length > (new Set(inpData.map(l => l.id))).size)                       return new Response("Element ids not unique", {status: 501});
+    thisReq.reqCount = inpData.length;
+    // If there are no requests passed, run test data
+    const toRead = inpData.length > 0 ? prepData(inpData) : prepData(testData);
+    // Wait for all results, as the read function is per tile
+    const readPromises: Promise<resArr>[] = [];
+    for (const tileKey of Object.keys(toRead)) readPromises.push(readTile(tileKey, toRead[tileKey]));
+    // Read and cache the tile data then calculate, format & return results
+    let result: retObj = {};
+    await Promise.all(readPromises).then((values: resArrArr) => result = resFmt(values));
+    thisReq.endTs = (new Date()).getTime();
+    console.log(thisReq);
+    return new Response(JSON.stringify(result), {"status": 200, headers: {"content-type": "application/json"}});
+}
 
 export async function readTile (tileKey: string, locations: targArr): Promise<resArr> {
     if (mastTileKeys.indexOf(tileKey) === -1) return locations.map(t => ({"id": t.id, "mc": ''}));
     let tileData: Uint8ClampedArray;
-    // If available, read from cache
-    if (cache[tileKey] !== undefined) {
-        tileData = cache[tileKey];
+    const entry = await kv.get<Uint8ClampedArray>(["tile", tileKey, 0]); // Only need to check for the first slice existing
+    if (entry.value) { // If available, read from cache
+        tileData = await readTileKv(tileKey);
     } else {
         const url = makeUrl(tileKey);
         const cvs = createCanvas(256, 256);
@@ -23,7 +43,7 @@ export async function readTile (tileKey: string, locations: targArr): Promise<re
         const image = await loadImage(url);
         ctx.drawImage(image, 0, 0);
         tileData = ctx.getImageData(0, 0, 256, 256).data;
-        cache[tileKey] = tileData;
+        storeTileKv(tileKey, tileData);
     }
     return locations.map(loc => {
         const spl = (loc.y * 256 + loc.x) * 4; // Locate data
@@ -58,13 +78,13 @@ export function prepData (rawData: rawData): {[index: string]: targArr} {
 export function resFmt (arr: resArrArr): retObj {
     const result: retObj = {};
     for (const rA of arr) for (const r of rA) result[r.id] = r.mc;
-    servCount += Object.keys(result).length;
-    reqCount++;
     return result;
 }
 
-export function countCache (): string {
-    return "Cached " + Object.keys(cache).length.toString() + " of " + mastTileKeys.length + " tiles";
+export async function countCache (): Promise<string> {
+    const cachedTiles = await kv.list({prefix: ["tile"]});
+    // May need to filter for those which dow have values
+    return "Cached " + (Object.keys(cachedTiles).length / 8).toString() + " of " + mastTileKeys.length + " tiles";
 }
 
 export function status (): string {
@@ -76,67 +96,8 @@ export function status (): string {
     let msg  = 'Server has been up for ' + upDay + ' days, ';
         msg += upHrs + ' hours, ';
         msg += upMin + ' minutes, ';
-        msg += upSec + ' seconds. ';
-        msg += servCount.toString() + ' locations served via ';
-        msg += reqCount.toString() + ' requests';
+        msg += upSec + ' seconds.';
     return msg;
-}
-
-function mercator (loc: latLon): xy {
-    const mapDim: number = 32768; // 256 pixels * 128 tiles
-    if (Math.abs(loc.lat) > 85.0511287798066) return [NaN, NaN]; // Assert latitude limits
-    loc.lon = (loc.lon % 360 + 540) % 360 - 180; // Handle longitude rollover
-    const latRad = loc.lat * Math.PI / 180;
-    const mercN = Math.log(Math.tan(Math.PI / 4 + latRad / 2));
-    const x = (loc.lon + 180) * (mapDim / 360);
-    const y = (mapDim / 2) - (mapDim * mercN / (2 * Math.PI));
-    return [x, y];
-}
-
-function genTileKey (prj: xy): string {
-    return prj.map(n => lpad(Math.floor(n / 256).toString(), 3, "0")).join("_");
-}
-
-function rgbToId ([r, g, b]: Uint8ClampedArray, nolog=false) {
-    if ([r, g, b].join("") === "000") return 0;
-    if ([r, g, b].join("") === "255255255") return 0;
-    let code = "rgba(" + r + "," + g + "," + b + ",1)";
-    if (colorToId[code]) return colorToId[code];
-    for (const per of compressionDebug) {
-        code = "rgba(" + (r + per.r) + "," + (g + per.g) + "," + (b + per.b) + ",1)";
-        if (colorToId[code]) return colorToId[code];
-    }
-    if (!nolog) console.log("Sample not matched", [r, g, b]);
-    return 0;
-}
-
-function lpad (str: string, len: number, padChar: string="0"): string {
-    const retLen = Math.max(str.length, len);
-    return padChar.repeat(retLen - str.length) + str;
-}
-
-function makeUrl (tileKey: string): string {
-    return 'https://cafread.github.io/metrocity2024/tiles/' + tileKey + '.png';
-}
-
-function validateBorder (cc: string, mc_cc: string, res: res): res {
-    if (cc === 'SG') return {"id": res.id, "mc": 'Singapore, SG'};
-    if (cc === 'HK') return {"id": res.id, "mc": 'Hong Kong, HK'};
-    if (cc === 'MO') return {"id": res.id, "mc": 'Macau, (MO), CN'};
-    if (cc === 'MY' && mc_cc === 'SG') return {"id": res.id, "mc": 'Johor Bahru, MY'};
-    if (cc === mc_cc) return res;
-    if (openBorders[cc]?.includes(mc_cc)) return res;
-    // Special awkward border cases
-    if (cc === 'CG' && res.mc === 'Kinshasa, CD') return {"id": res.id, "mc": 'Brazzaville, CG'};
-    if (cc === 'MX' && res.mc === 'San Diego, (CA), US') return {"id": res.id, "mc": 'Tijuana, MX'};
-    if (cc === 'US' && res.mc === 'Juarez, MX') return {"id": res.id, "mc": 'El Paso, (TX), US'};
-    if (cc === 'US' && res.mc === 'Hamilton, (ON), CA') return {"id": res.id, "mc": 'Buffalo, (NY), US'};
-    if (cc === 'US' && res.mc === 'Windsor, (ON), CA') return {"id": res.id, "mc": 'Detroit, (MI), US'};
-    if (cc === 'US' && res.mc === 'London, (ON), CA') return {"id": res.id, "mc": 'Detroit, (MI), US'};
-    if (cc === 'CA' && res.mc === 'Detroit, (MI), US') return {"id": res.id, "mc": 'Windsor, (ON), CA'};
-    if (cc === 'CN' && res.mc === 'Hong Kong, HK') return {"id": res.id, "mc": 'Shenzhen, (GD), CN'};
-    if (cc === 'TR' && res.mc === 'Nicosia, CY') return res;
-    return {"id": res.id, mc: ''};
 }
 
 // Helper function to handle incoming GitHub webhook payload
@@ -160,13 +121,38 @@ export async function handleGithubWebhook(req: Request): Promise<Response> {
     }
     // Remove updated files from cache
     for (const tileKey of updatedFiles) {
-        if (cache[tileKey]) {
-            delete cache[tileKey];
-            console.log(`Cache cleared for updated tile: ${tileKey}`);
-        }
+        for (let i = 0; i < 8; i++) kv.delete(["tile", tileKey, i]);
+        console.log(`Cache cleared for updated tile: ${tileKey}`);
     }
     return new Response("Webhook processed", {status: 200});
 }
+
+// Deno kv values are limited to a length of 65536 bytes
+function storeTileKv (tileKey: string, tileData: Uint8ClampedArray) {
+    const sliceLen = 256 * 256 * 4 / 8;
+    for (let i = 0; i < 8; i++) {
+        const readPoint = i * 256 * 256 * 4 / 8;
+        const sliceData = tileData.slice(readPoint, readPoint + sliceLen);
+        kv.set(["tile", tileKey, i], sliceData);
+    }
+}
+
+async function readTileKv (tileKey: string): Promise<Uint8ClampedArray> {
+    const fullArray = new Uint8ClampedArray(256 * 256 * 4);
+    const sliceLen = 256 * 256 * 4 / 8;
+    for (let i = 0; i < 8; i++) {
+        const sliceData = await kv.get<ArrayBuffer>(["tile", tileKey, i]);
+        if (sliceData.value !== null) {
+            const sliceArray = new Uint8ClampedArray(sliceData.value);
+            fullArray.set(sliceArray, i * sliceLen);
+        } else {
+            console.log(`Data for tile slice${i} on ${tileKey} not found`);
+        }
+    }
+    return fullArray;
+}
+
+
 
 // Function to verify the GitHub signature using HMAC SHA-256
 const SECRET = Deno.env.get("auth") || "";
