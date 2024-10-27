@@ -31,7 +31,7 @@ Deno.serve({port: servePort, hostname: servIP}, async (request: Request) => {
         console.log(thisReq);
         switch (pathName) {
             case "/cache":
-                return new Response(await countCache(),                         {status: 200});
+                return new Response(countCache(),                               {status: 200});
             case "/status":
                 return new Response(status(),                                   {status: 200});
             case "/info":
