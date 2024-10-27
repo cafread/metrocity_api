@@ -137,3 +137,27 @@ function validateBorder (cc: string, mc_cc: string, res: res): res {
     if (cc === 'TR' && res.mc === 'Nicosia, CY') return res;
     return {"id": res.id, mc: ''};
 }
+
+// Helper function to handle incoming GitHub webhook payload
+export async function handleGithubWebhook(req: Request): Promise<Response> {
+    console.log("Potential tile update, checking for changes");
+    const payload = await req.json();
+    const updatedFiles = new Set<string>();
+    // Check modified files in the push payload
+    for (const commit of payload.commits) {
+        for (const file of commit.modified) {
+            if (file.startsWith("tiles/") && file.endsWith(".png")) {
+                const fileName = file.split("/").pop()!;
+                updatedFiles.add(fileName);
+            }
+        }
+    }
+    // Remove updated files from cache
+    for (const tileKey of updatedFiles) {
+        if (cache[tileKey]) {
+            delete cache[tileKey];
+            console.log(`Cache cleared for updated tile: ${tileKey}`);
+        }
+    }
+    return new Response("Webhook processed", {status: 200});
+}

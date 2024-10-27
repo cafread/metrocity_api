@@ -9,4 +9,4 @@ export type resArr    = res[];
 export type resArrArr = resArr[];
 export type retObj    = {[index: string]:string};
 export type latLon    = {"lat": number, "lon": number};
-export type reqStat = {id: string, begTs: number, endTs: number, reqType: string, endPoint: string, reqCount: number};
+export type reqStat   = {ip: string, begTs: number, endTs: number, reqType: string, endPoint: string, reqCount: number};

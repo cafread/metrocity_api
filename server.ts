@@ -1,25 +1,24 @@
 
 import {resArr, resArrArr, retObj, reqStat} from "./types.ts";
-import {testData} from "./lookups.ts";
-import {resFmt, prepData, readTile, countCache, status} from "./functions.ts";
-import * as uuid from "jsr:@std/uuid";
+import {testData, cache50} from "./lookups.ts";
+import {resFmt, prepData, readTile, countCache, status, handleGithubWebhook} from "./functions.ts";
 
 const servePort: number = 3000;
 const servIP: string = "0.0.0.0";
-const reqStats: reqStat[] = [];
 
 Deno.serve({port: servePort, hostname: servIP}, async (request: Request) => {
+    const ip: string = request.headers.get("host") || "";
+    const pathName = new URL(request.url).pathname;
     const thisReq: reqStat = {
-        "id": uuid.v1.generate(),
+        "ip": ip,
         "begTs": (new Date()).getTime(),
         "reqType": request.method,
-        "endPoint": (new URL(request.url)).pathname,
+        "endPoint": pathName,
         "endTs": (new Date()).getTime(),
         "reqCount": 0
     };
     if (request.method == "POST") {
-        const url = new URL(request.url);
-        if (url.pathname !== "/mc_api") return new Response("Unknown route", {status: 501});
+        if (pathName !== "/mc_api") return new Response("Unknown route", {status: 501});
         const inpData: JSON = await request.json();
         // Assert that the request payload is appropriate
         if (!Array.isArray(inpData))                                                       return new Response("Request is not array",   {status: 501});
@@ -38,19 +37,21 @@ Deno.serve({port: servePort, hostname: servIP}, async (request: Request) => {
         let result: retObj = {};
         await Promise.all(readPromises).then((values: resArrArr) => result = resFmt(values));
         thisReq.endTs = (new Date()).getTime();
-        reqStats.push(thisReq);
+        console.log(thisReq);
         return new Response(JSON.stringify(result), {"status": 200, headers: {"content-type": "application/json"}});
     } else if (request.method === "GET") {
-        const url = new URL(request.url);
-        reqStats.push(thisReq);
-        if (url.pathname === "/cache")    return new Response(countCache(),                               {status: 200});
-        if (url.pathname === "/status")   return new Response(status(),                                   {status: 200});
-        if (url.pathname === "/rawstats") return new Response(JSON.stringify(reqStats),                   {status: 200, headers: {"content-type": "application/json"}});
-        if (url.pathname === "/info")     return new Response("https://github.com/cafread/metrocity_api", {status: 200});
-        if (url.pathname === "/version")  return new Response("Release candidate 1.1",                    {status: 200});
+        console.log(thisReq);
+        if (pathName === "/cache")    return new Response(countCache(),                               {status: 200});
+        if (pathName === "/status")   return new Response(status(),                                   {status: 200});
+        if (pathName === "/info")     return new Response("https://github.com/cafread/metrocity_api", {status: 200});
+        if (pathName === "/version")  return new Response("Release candidate 1.1",                    {status: 200});
         return new Response("Unknown route", {status: 501});
+    } else if (request.method === "POST" && pathName === "/github-webhook") {
+        return handleGithubWebhook(request);
     } else {
-        reqStats.push(thisReq);
+        console.log(thisReq);
         return new Response("Reqest type not accepted", {status: 501});
     }
 });
+// On server start, cache data for the top 50 tiles to help make common responses faster
+for (const tileKey of cache50) readTile(tileKey, []);
