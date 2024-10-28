@@ -8,9 +8,11 @@ import {compress, decompress} from "./lzstring.ts";
 
 const startTs: number = (new Date()).getTime() / 1000;
 const kv = await Deno.openKv();
-// 512MB max memory is available on Deno deploy
-// A Uint8ClampedArray size 256*256*4 is 2097152 bytes
-// tileCache data structure is MUCH more memory efficient
+// 512MB max memory is available on Deno deploy and kv only permits values up to 64KiB
+// A Uint8ClampedArray size 256*256*4 is 2097152 bytes and there are 2370 tiles so far
+// An uncompressed cache is therefore not possible, nor is storing them in the kv as is
+// The tileCache data structure is MUCH more memory efficient, using just 4.54 MiB total in kv
+// Data is expanded only when needed
 
 function encodeTile (tileData: Uint8ClampedArray): tileCache {
     const tempArr = [];
@@ -37,13 +39,13 @@ function decodeTile (tileCache: tileCache): number[] {
 export async function handleMcRequest (request: Request, thisReq: reqStat): Promise<Response> {
     const inpData: JSON = await request.json();
     // Assert that the request payload is appropriate
-    if (!Array.isArray(inpData))                                                       return new Response("Request is not array",   {status: 501});
-    if (!inpData.every(x => typeof x === "object" && !Array.isArray(x) && x !== null)) return new Response("Invalid request data",   {status: 501});
-    if (!inpData.every(e => e.id && e.lat && e.lon && Object.keys(e).length <= 4))     return new Response("Invalid request data",   {status: 501});
-    if (!inpData.every(e => Math.abs(e.lat) <= 85.0511287798066))                      return new Response("Out of bounds latitude", {status: 501});
-    if (inpData.length > reqLim)                                                       return new Response("Excessive request",      {status: 501});
+    if (!Array.isArray(inpData))                                                       return new Response("Request is not array",    {status: 400});
+    if (!inpData.every(x => typeof x === "object" && !Array.isArray(x) && x !== null)) return new Response("Invalid request data",    {status: 400});
+    if (!inpData.every(e => e.id && e.lat && e.lon && Object.keys(e).length <= 4))     return new Response("Invalid request data",    {status: 400});
+    if (!inpData.every(e => Math.abs(e.lat) <= 85.0511287798066))                      return new Response("Out of bounds latitude",  {status: 422});
+    if (inpData.length > reqLim)                                                       return new Response(`Limit of ${reqLim} locs`, {status: 413});
     // Assert that id is unique
-    if (inpData.length > (new Set(inpData.map(l => l.id))).size)                       return new Response("Element ids not unique", {status: 501});
+    if (inpData.length > (new Set(inpData.map(l => l.id))).size)                       return new Response("Element ids not unique",  {status: 400});
     thisReq.reqCount = inpData.length;
     // If there are no requests passed, run test data
     const toRead = inpData.length > 0 ? prepData(inpData) : prepData(testData);
@@ -107,11 +109,6 @@ export function resFmt (arr: resArrArr): retObj {
     for (const rA of arr) for (const r of rA) result[r.id] = r.mc;
     return result;
 }
-
-// export async function countCache (): Promise<number> {
-//     const cachedTiles = await kv.list<string>({prefix: ["tile"]}); // Problem here is this returns key & data which is large
-//     return await Object.keys(cachedTiles).length;
-// }
 
 export function status (): string {
     const upTim = (new Date()).getTime() / 1000 - startTs;

@@ -42,6 +42,6 @@ Deno.serve({port: servePort, hostname: servIP}, async (request: Request) => {
                 return new Response("Unknown get route",                        {status: 501});
         }
     } else {
-        return new Response("Reqest type not accepted", {status: 501});
+        return new Response("Reqest type not accepted", {status: 405});
     }
 });
