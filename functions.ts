@@ -171,13 +171,3 @@ async function verifySignature(req: Request, body: Uint8Array): Promise<boolean>
     // Check if the calculated digest matches the GitHub signature
     return equals(new TextEncoder().encode(digest), new TextEncoder().encode(signature));
 }
-
-
-// Temp, rebuilding cache
-export async function deleteAllTilesFromKv (): Promise<string> {
-    for await (const entry of kv.list({prefix: ["tile"]})) {
-        await kv.delete(entry.key);
-    }
-    console.log("All entries with prefix 'tile' have been deleted.");
-    return "purged";
-};
