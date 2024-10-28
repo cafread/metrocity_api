@@ -41,6 +41,7 @@ export async function handleMcRequest (request: Request, thisReq: reqStat): Prom
     if (!inpData.every(x => typeof x === "object" && !Array.isArray(x) && x !== null)) return new Response("Invalid request data",   {status: 501});
     if (!inpData.every(e => e.id && e.lat && e.lon && Object.keys(e).length <= 4))     return new Response("Invalid request data",   {status: 501});
     if (!inpData.every(e => Math.abs(e.lat) <= 85.0511287798066))                      return new Response("Out of bounds latitude", {status: 501});
+    if (inpData.length > reqLim)                                                       return new Response("Excessive request",      {status: 501});
     // Assert that id is unique
     if (inpData.length > (new Set(inpData.map(l => l.id))).size)                       return new Response("Element ids not unique", {status: 501});
     thisReq.reqCount = inpData.length;
@@ -154,6 +155,7 @@ export async function handleGithubWebhook(req: Request): Promise<Response> {
 
 // Function to verify the GitHub signature using HMAC SHA-256
 const SECRET = Deno.env.get("auth") || "";
+const reqLim = parseInt(Deno.env.get("reqLim") || "1000000", 10);
 async function verifySignature(req: Request, body: Uint8Array): Promise<boolean> {
     const signature = req.headers.get("X-Hub-Signature-256");
     if (!signature || !SECRET) return false;
