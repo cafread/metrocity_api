@@ -1,6 +1,6 @@
 
 import {reqStat} from "./types.ts";
-import {handleMcRequest, status, handleGithubWebhook, readTile} from "./functions.ts";
+import {handleMcRequest, status, handleGithubWebhook, readTile, deleteAllTilesFromKv} from "./functions.ts";
 import {cache50} from "./lookups.ts"
 
 const servePort: number = 3000;
@@ -38,6 +38,8 @@ Deno.serve({port: servePort, hostname: servIP}, async (request: Request) => {
                 return new Response("https://github.com/cafread/metrocity_api", {status: 200});
             case "/version":
                 return new Response("Release candidate 1.3",                    {status: 200});
+            case "/purge":
+                return new Response(await deleteAllTilesFromKv(),               {status: 200});
             default:
                 return new Response("Unknown get route",                        {status: 501});
         }
@@ -48,18 +50,3 @@ Deno.serve({port: servePort, hostname: servIP}, async (request: Request) => {
 
 // Cache the data for the top 50 tiles
 // for (const tileKey of cache50) readTile(tileKey, []);
-
-// Temp, rebuilding cache
-const kv = await Deno.openKv();
-(async function deleteAllTilesFromKv() {
-    // List all entries with the prefix "tile"
-    for await (const entry of kv.list({ prefix: ["tile"] })) {
-        // Delete each entry by its key
-        await kv.delete(entry.key);
-    }
-    console.log("All entries with prefix 'tile' have been deleted.");
-    for (const tileKey of cache50) readTile(tileKey, []);
-})();
-
-
-
