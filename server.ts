@@ -72,7 +72,9 @@ const kv = await Deno.openKv();
     const cacheStatus = Object.fromEntries(mastTileKeys.map(k => [k, 0]));
     try {
         for await (const entry of kv.list({prefix: ["tile"]})) {
+            console.log("Entry key:", entry.key); // Log the entire entry key
             const key = entry.key[1].toString();
+            console.log("Tile key:", key); // Log the tile key
             if (mastTileSet.has(key)) cacheStatus[key] = 1; // Mark present
         }
     } catch (error) {
