@@ -56,8 +56,13 @@ Deno.serve({port: servePort, hostname: servIP}, async (request: Request) => {
             return;
         }
         const tileKey = mastTileKeys[index];
-        await readTile(tileKey, []);  // Call your readTile function
-        console.log(`Processed tile: ${tileKey}`);
+        try {
+            await readTile(tileKey, []);  // Call your readTile function
+            console.log(`Processed tile: ${tileKey}`);
+        } catch(error) {
+            console.error(`Failed to process tile ${tileKey}:`, error);
+            // Error is logged, but processing will continue
+        }
         index++;
     }, 400);  // Delay between calls
 })();
