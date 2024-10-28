@@ -47,6 +47,7 @@ Deno.serve({port: servePort, hostname: servIP}, async (request: Request) => {
 });
 
 // Cache the data so that subsequent requests are fast
+// Only executes on start and for uncached tiles
 async function buildCacheWithDelay(tileKeys: string[]) {
     let index = 0;
     const intervalId = setInterval(async () => {
@@ -63,7 +64,7 @@ async function buildCacheWithDelay(tileKeys: string[]) {
             console.error(`Failed to process tile ${tileKey}:`, error);
         }
         index++;
-    }, 400);  // Delay between calls
+    }, 400); // Delay between calls
 }
 
 const kv = await Deno.openKv();
@@ -72,9 +73,7 @@ const kv = await Deno.openKv();
     const cacheStatus = Object.fromEntries(mastTileKeys.map(k => [k, 0]));
     try {
         for await (const entry of kv.list({prefix: ["tile"]})) {
-            console.log("Entry key:", entry.key); // Log the entire entry key
             const key = entry.key[1].toString();
-            console.log("Tile key:", key); // Log the tile key
             if (mastTileSet.has(key)) cacheStatus[key] = 1; // Mark present
         }
     } catch (error) {
