@@ -1,10 +1,10 @@
 
 import {reqStat} from "./types.ts";
-import {handleMcRequest, status, handleGithubWebhook, readTile} from "./functions.ts";
-import {mastTileKeys} from "./lookups.ts"
+import {handleMcRequest, status, handleGithubWebhook, onStart} from "./functions.ts";
 
 const servePort: number = 3000;
 const servIP: string = "0.0.0.0";
+onStart();
 
 Deno.serve({port: servePort, hostname: servIP}, async (request: Request) => {
     const ip: string = request.headers.get("host") || "";
@@ -45,43 +45,3 @@ Deno.serve({port: servePort, hostname: servIP}, async (request: Request) => {
         return new Response("Reqest type not accepted", {status: 501});
     }
 });
-
-// Cache the data so that subsequent requests are fast
-// Only executes on start and for uncached tiles
-async function buildCacheWithDelay(tileKeys: string[]) {
-    let index = 0;
-    const intervalId = setInterval(async () => {
-        if (index >= tileKeys.length) {
-            clearInterval(intervalId); // Stop once all tiles are processed
-            console.log("All tiles have been processed.");
-            return;
-        }
-        const tileKey = tileKeys[index];
-        try {
-            await readTile(tileKey, []);
-            console.log(`Processed tile: ${tileKey}`);
-        } catch(error) {
-            console.error(`Failed to process tile ${tileKey}:`, error);
-        }
-        index++;
-    }, 400); // Delay between calls
-}
-
-const kv = await Deno.openKv();
-(async function listUncached() {
-    const mastTileSet = new Set(mastTileKeys);
-    const cacheStatus = Object.fromEntries(mastTileKeys.map(k => [k, 0]));
-    try {
-        for await (const entry of kv.list({prefix: ["tile"]})) {
-            const key = entry.key[1].toString();
-            if (mastTileSet.has(key)) cacheStatus[key] = 1; // Mark present
-        }
-    } catch (error) {
-        console.error("Error accessing Deno KV:", error);
-    }
-    const uncachedTiles = Object.entries(cacheStatus)
-        .filter(([_k, v]) => v === 0)
-        .map(([k, _v]) => k);
-    console.log(uncachedTiles);
-    buildCacheWithDelay(uncachedTiles);
-})();

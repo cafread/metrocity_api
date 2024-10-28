@@ -153,6 +153,45 @@ export async function handleGithubWebhook(req: Request): Promise<Response> {
     return new Response("Webhook processed", {status: 200});
 }
 
+export async function onStart () {
+    // Check that the kv store has good coverage of the tileset
+    const mastTileSet = new Set(mastTileKeys);
+    const cacheStatus = Object.fromEntries(mastTileKeys.map(k => [k, 0]));
+    try {
+        for await (const entry of kv.list({prefix: ["tile"]})) {
+            const key = entry.key[1].toString();
+            if (mastTileSet.has(key)) cacheStatus[key] = 1; // Mark present
+        }
+    } catch (error) {
+        console.error("Error accessing Deno KV:", error);
+    }
+    const uncachedTiles = Object.entries(cacheStatus)
+        .filter(([_k, v]) => v === 0)
+        .map(([k, _v]) => k);
+    console.log(uncachedTiles);
+    buildCacheWithDelay(uncachedTiles);
+}
+
+// Cache the requested tile data with a delay per tile
+async function buildCacheWithDelay(tileKeys: string[]) {
+    let index = 0;
+    const intervalId = setInterval(async () => {
+        if (index >= tileKeys.length) {
+            clearInterval(intervalId); // Stop once all tiles are processed
+            console.log("All tiles have been processed.");
+            return;
+        }
+        const tileKey = tileKeys[index];
+        try {
+            await readTile(tileKey, []);
+            console.log(`Processed tile: ${tileKey}`);
+        } catch(error) {
+            console.error(`Failed to process tile ${tileKey}:`, error);
+        }
+        index++;
+    }, 400); // Delay between calls
+}
+
 // Function to verify the GitHub signature using HMAC SHA-256
 const SECRET = Deno.env.get("auth") || "";
 const reqLim = parseInt(Deno.env.get("reqLim") || "1000000", 10);
