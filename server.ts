@@ -1,7 +1,7 @@
 
 import {reqStat} from "./types.ts";
 import {handleMcRequest, status, handleGithubWebhook, readTile} from "./functions.ts";
-import {cache50} from "./lookups.ts"
+import {cache50, mastTileKeys} from "./lookups.ts"
 
 const servePort: number = 3000;
 const servIP: string = "0.0.0.0";
@@ -46,5 +46,18 @@ Deno.serve({port: servePort, hostname: servIP}, async (request: Request) => {
     }
 });
 
-// Cache the data for the top 50 tiles
-for (const tileKey of cache50) readTile(tileKey, []);
+// Cache the data so that subsequent requests are fast
+(async function buildCacheWithDelay() {
+    let index = 0;
+    const intervalId = setInterval(async () => {
+        if (index >= mastTileKeys.length) {
+            clearInterval(intervalId); // Stop once all tiles are processed
+            console.log("All tiles have been processed.");
+            return;
+        }
+        const tileKey = mastTileKeys[index];
+        await readTile(tileKey, []);  // Call your readTile function
+        console.log(`Processed tile: ${tileKey}`);
+        index++;
+    }, 400);  // Delay between calls
+})();
