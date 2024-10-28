@@ -47,4 +47,19 @@ Deno.serve({port: servePort, hostname: servIP}, async (request: Request) => {
 });
 
 // Cache the data for the top 50 tiles
-for (const tileKey of cache50) readTile(tileKey, []);
+// for (const tileKey of cache50) readTile(tileKey, []);
+
+// Temp, rebuilding cache
+const kv = await Deno.openKv();
+(async function deleteAllTilesFromKv() {
+    // List all entries with the prefix "tile"
+    for await (const entry of kv.list({ prefix: ["tile"] })) {
+        // Delete each entry by its key
+        await kv.delete(entry.key);
+    }
+    console.log("All entries with prefix 'tile' have been deleted.");
+    for (const tileKey of cache50) readTile(tileKey, []);
+})();
+
+
+

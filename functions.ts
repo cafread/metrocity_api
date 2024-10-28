@@ -108,10 +108,7 @@ export function resFmt (arr: resArrArr): retObj {
 }
 
 // export async function countCache (): Promise<number> {
-//     const cachedTiles = await kv.list<string>({prefix: ["tile"]}); // Problem here is this returns key & data which is large//     for (const cacheKey of Object.keys(cachedTiles)) console.log(cacheKey);
-
-//     // console.log((await kv.list({prefix: ["tile"]})).toString());
-    
+//     const cachedTiles = await kv.list<string>({prefix: ["tile"]}); // Problem here is this returns key & data which is large
 //     return await Object.keys(cachedTiles).length;
 // }
 
