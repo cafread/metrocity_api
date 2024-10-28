@@ -362,7 +362,7 @@ export const mastTileKeys: string[] = [
     "124_081","124_082","124_083","125_061","125_063","125_077","125_078","125_079","125_080","125_081","125_082","126_077","126_078",
     "126_079","126_080"
 ];
-export const cityData: {[index: string]:string} = {
+export const cityData: {[index: string]: string} = {
     "23814": "Kahriz, IR",
     "53654": "Mogadishu, SO",
     "54225": "Marka, SO",

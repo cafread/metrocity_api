@@ -1,14 +1,39 @@
 import {createCanvas, loadImage} from "https://deno.land/x/canvas@v1.4.2/mod.ts";
 import {mastTileKeys, cityData, testData} from './lookups.ts';
-import {xy, rawData, targ, targArr, resArr, resArrArr, retObj, reqStat} from "./types.ts";
+import {xy, rawData, targ, targArr, resArr, resArrArr, retObj, reqStat, tileCache} from "./types.ts";
 import {mercator, genTileKey, rgbToId, makeUrl, validateBorder} from "./geo_functions.ts";
 import {equals} from "https://deno.land/std/bytes/mod.ts";
+import {encodeBase64, decodeBase64} from "jsr:@std/encoding/base64";
+import {compress, decompress} from "./lzstring.ts";
 
 const startTs: number = (new Date()).getTime() / 1000;
-// Use a cache as prime location tiles will be hit a lot
-// This speeds up the response and reduces calls to Github
-// This seems to work better than using Deno KV for now and also avoids the value length limits
-const cache: {[index: string]: Uint8ClampedArray} = {};
+
+const cache: {[index: string]: tileCache} = {};
+// 512MB max memory is available on Deno deploy
+// A Uint8ClampedArray size 256*256*4 is 2097152 bytes
+// tileCache data structure is MUCH more memory efficient
+
+function encodeTile (tileData: Uint8ClampedArray): tileCache {
+    const tempArr = [];
+    const ids: number[] = [0]; // 0 = no metro city
+    for (let i = 0; i < 256*256*4; i+=4) {
+        const mcid = rgbToId(tileData.slice(i, i + 3));
+        let _id = ids.indexOf(mcid);
+        if (_id === -1) {
+            _id = ids.length;
+            ids.push(mcid);
+        }
+        tempArr.push(_id);
+    }
+    const datStr = compress(encodeBase64(new Uint8Array(tempArr)));
+    return {idMap: ids, datStr: datStr};
+}
+
+function decodeTile (tileCache: tileCache): number[] {
+    // Turn a tilecache data structure into a 256*256 long array of mcids
+    const codedMcs: Uint8Array = decodeBase64(decompress(tileCache.datStr));
+    return Array.from(codedMcs).map(i => tileCache.idMap[i]);
+}
 
 export async function handleMcRequest (request: Request, thisReq: reqStat): Promise<Response> {
     const inpData: JSON = await request.json();
@@ -35,7 +60,7 @@ export async function handleMcRequest (request: Request, thisReq: reqStat): Prom
 
 export async function readTile (tileKey: string, locations: targArr): Promise<resArr> {
     if (mastTileKeys.indexOf(tileKey) === -1) return locations.map(t => ({"id": t.id, "mc": ''}));
-    let tileData: Uint8ClampedArray;
+    let tileData: tileCache;
     if (cache[tileKey]) {
         tileData = cache[tileKey];
     } else {
@@ -44,13 +69,12 @@ export async function readTile (tileKey: string, locations: targArr): Promise<re
         const ctx = cvs.getContext("2d");
         const image = await loadImage(url);
         ctx.drawImage(image, 0, 0);
-        tileData = ctx.getImageData(0, 0, 256, 256).data;
+        tileData = encodeTile(ctx.getImageData(0, 0, 256, 256).data);
         cache[tileKey] = tileData;
     }
+    const mcData = decodeTile(tileData);
     return locations.map(loc => {
-        const spl = (loc.y * 256 + loc.x) * 4; // Locate data
-        const mcid = rgbToId(tileData.slice(spl, spl + 3)); // Read specified data & convert to id, no alpha
-        const mcn = cityData[mcid] || ''; // Read name from lookup
+        const mcn = cityData[mcData[loc.y * 256 + loc.x]] || "";
         if (mcn    === '') return {"id": loc.id, "mc": mcn};
         if (loc.cc === '') return {"id": loc.id, "mc": mcn};
         return validateBorder(loc.cc, mcn.slice(-2), {"id": loc.id, "mc": mcn});
