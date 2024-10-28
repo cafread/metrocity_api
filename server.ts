@@ -1,6 +1,6 @@
 
 import {reqStat} from "./types.ts";
-import {handleMcRequest, countCache, status, handleGithubWebhook, readTile} from "./functions.ts";
+import {handleMcRequest, status, handleGithubWebhook, readTile} from "./functions.ts";
 import {cache50} from "./lookups.ts"
 
 const servePort: number = 3000;
@@ -30,14 +30,14 @@ Deno.serve({port: servePort, hostname: servIP}, async (request: Request) => {
     } else if (request.method === "GET") {
         console.log(thisReq);
         switch (pathName) {
-            case "/cache":
-                return new Response(countCache(),                               {status: 200});
+            // case "/cache": // Awaiting kv.count({prefix: ["tile"]}) to avoid large & pointless reads
+            //     return new Response(`Cached ${await countCache()} tiles`,       {status: 200});
             case "/status":
                 return new Response(status(),                                   {status: 200});
             case "/info":
                 return new Response("https://github.com/cafread/metrocity_api", {status: 200});
             case "/version":
-                return new Response("Release candidate 1.2",                    {status: 200});
+                return new Response("Release candidate 1.3",                    {status: 200});
             default:
                 return new Response("Unknown get route",                        {status: 501});
         }

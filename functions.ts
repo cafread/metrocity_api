@@ -7,8 +7,7 @@ import {encodeBase64, decodeBase64} from "jsr:@std/encoding/base64";
 import {compress, decompress} from "./lzstring.ts";
 
 const startTs: number = (new Date()).getTime() / 1000;
-
-const cache: {[index: string]: tileCache} = {};
+const kv = await Deno.openKv();
 // 512MB max memory is available on Deno deploy
 // A Uint8ClampedArray size 256*256*4 is 2097152 bytes
 // tileCache data structure is MUCH more memory efficient
@@ -61,8 +60,9 @@ export async function handleMcRequest (request: Request, thisReq: reqStat): Prom
 export async function readTile (tileKey: string, locations: targArr): Promise<resArr> {
     if (mastTileKeys.indexOf(tileKey) === -1) return locations.map(t => ({"id": t.id, "mc": ''}));
     let tileData: tileCache;
-    if (cache[tileKey]) {
-        tileData = cache[tileKey];
+    const entry = await kv.get<tileCache>(["tile", tileKey]); // Only need to check for the first slice existing
+    if (entry.value) { // If available, read from cache
+        tileData = entry.value;
     } else {
         const url = makeUrl(tileKey);
         const cvs = createCanvas(256, 256);
@@ -70,7 +70,7 @@ export async function readTile (tileKey: string, locations: targArr): Promise<re
         const image = await loadImage(url);
         ctx.drawImage(image, 0, 0);
         tileData = encodeTile(ctx.getImageData(0, 0, 256, 256).data);
-        cache[tileKey] = tileData;
+        kv.set(["tile", tileKey], tileData);
     }
     const mcData = decodeTile(tileData);
     return locations.map(loc => {
@@ -107,9 +107,13 @@ export function resFmt (arr: resArrArr): retObj {
     return result;
 }
 
-export function countCache (): string {
-    return `Cached ${Object.keys(cache).length} of ${mastTileKeys.length} tiles`;
-}
+// export async function countCache (): Promise<number> {
+//     const cachedTiles = await kv.list<string>({prefix: ["tile"]}); // Problem here is this returns key & data which is large//     for (const cacheKey of Object.keys(cachedTiles)) console.log(cacheKey);
+
+//     // console.log((await kv.list({prefix: ["tile"]})).toString());
+    
+//     return await Object.keys(cachedTiles).length;
+// }
 
 export function status (): string {
     const upTim = (new Date()).getTime() / 1000 - startTs;
@@ -145,8 +149,7 @@ export async function handleGithubWebhook(req: Request): Promise<Response> {
     }
     // Remove updated files from cache
     for (const tileKey of updatedFiles) {
-        //for (let i = 0; i < 8; i++) kv.delete(["tile", tileKey, i]);
-        delete cache[tileKey];
+        kv.delete(["tile", tileKey]);
         console.log(`Cache cleared for updated tile: ${tileKey}`);
     }
     return new Response("Webhook processed", {status: 200});
