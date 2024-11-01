@@ -129,7 +129,7 @@ export async function handleGithubWebhook(req: Request): Promise<Response> {
     const body = new Uint8Array(await req.arrayBuffer());
     if (!(await verifySignature(req, body))) {
         console.log("Invalid signature, request denied.");
-        return new Response("Unauthorized", { status: 401 });
+        return new Response("Unauthorized", {status: 401});
     }
     console.log("Signature verified, proceeding");
     const payload = JSON.parse(new TextDecoder().decode(body));
@@ -148,10 +148,10 @@ export async function handleGithubWebhook(req: Request): Promise<Response> {
         setTimeout(async () => {
             await kv.delete(["tile", tileKey]);
             console.log(`Cache cleared for updated tile: ${tileKey}`);
-        }, 10 * 60 * 1000); // 10 minutes in milliseconds
+        }, 10 * 60 * 1000);
     }
     // Immediate response, not delayed by cache clearing
-    return new Response("Webhook processed", { status: 200 });
+    return new Response("Webhook processed", {status: 200});
 }
 
 export async function onStart () {
