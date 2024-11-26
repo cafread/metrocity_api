@@ -37,7 +37,7 @@ Deno.serve({port: servePort, hostname: servIP}, async (request: Request) => {
             case "/info":
                 return new Response("https://github.com/cafread/metrocity_api", {status: 200});
             case "/version":
-                return new Response("Release candidate 1.3",                    {status: 200});
+                return new Response("Release candidate 1.4",                    {status: 200});
             default:
                 return new Response("Unknown get route",                        {status: 501});
         }
