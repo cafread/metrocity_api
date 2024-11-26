@@ -1,6 +1,6 @@
 
 import {reqStat} from "./types.ts";
-import {handleMcRequest, status, handleGithubWebhook, onStart} from "./functions.ts";
+import {handleMcRequest, status, handleGithubWebhook, onStart} from "./api_functions.ts";
 
 const servePort: number = 3000;
 const servIP: string = "0.0.0.0";

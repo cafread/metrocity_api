@@ -1,6 +1,6 @@
 import {compressionDebug, openBorders} from './lookups.ts';
 import {xy, res, latLon} from "./types.ts";
-import {loadRemoteJSON} from "./functions.ts"
+import {loadRemoteJSON, lpad} from "./utils.ts";
 
 const colorToId: {[index: string]: number} = await loadRemoteJSON("https://raw.githubusercontent.com/cafread/metrocity2024/refs/heads/main/res/colorToId.json");
 
@@ -56,9 +56,4 @@ export function validateBorder (cc: string, mc_cc: string, res: res): res {
     if (cc === 'CN' && res.mc === 'Hong Kong, HK') return {"id": res.id, "mc": 'Shenzhen, (GD), CN'};
     if (cc === 'TR' && res.mc === 'Nicosia, CY') return res;
     return {"id": res.id, mc: ''};
-}
-
-function lpad (str: string, len: number, padChar: string="0"): string {
-    const retLen = Math.max(str.length, len);
-    return padChar.repeat(retLen - str.length) + str;
 }

@@ -5,17 +5,8 @@ import {mercator, genTileKey, rgbToId, makeUrl, validateBorder} from "./geo_func
 import {equals} from "https://deno.land/std/bytes/mod.ts";
 import {encodeBase64, decodeBase64} from "jsr:@std/encoding/base64";
 import {compress, decompress} from "./lzstring.ts";
+import {loadRemoteJSON, isValidTileKey} from "./utils.ts";
 
-export async function loadRemoteJSON<T>(url: string): Promise<T> {
-    try {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`Failed to fetch JSON: ${response.statusText}`);
-        return await response.json();
-    } catch (error) {
-        console.error(`Error fetching JSON from ${url}:`, error);
-        throw error; // Rethrow error so callers can handle it
-    }
-}
 const mastTileKeys: string[] = await loadRemoteJSON("https://raw.githubusercontent.com/cafread/metrocity2024/main/res/mastTileKeys.json");
 const cityData: cityDatum[] = await loadRemoteJSON("https://raw.githubusercontent.com/cafread/metrocity2024/refs/heads/main/res/2020cities15k_trimmed.json");
 
@@ -196,11 +187,6 @@ export async function handleGithubWebhook(req: Request): Promise<Response> {
     }
     // Immediate response, not delayed by cache clearing
     return new Response("Webhook processed", {status: 200});
-}
-
-function isValidTileKey(str: string): boolean {
-    const regex = /^[0-9]{3}_[0-9]{3}$/;
-    return regex.test(str);
 }
 
 export async function onStart () {
