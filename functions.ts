@@ -1,10 +1,23 @@
 import {createCanvas, loadImage} from "https://deno.land/x/canvas@v1.4.2/mod.ts";
-import {mastTileKeys, cityData, testData} from './lookups.ts';
-import {xy, rawData, targ, targArr, resArr, resArrArr, retObj, reqStat, tileCache} from "./types.ts";
+import {testData} from './lookups.ts';
+import {xy, latLon, rawData, targ, targArr, resArr, resArrArr, retObj, reqStat, tileCache, cityDatum} from "./types.ts";
 import {mercator, genTileKey, rgbToId, makeUrl, validateBorder} from "./geo_functions.ts";
 import {equals} from "https://deno.land/std/bytes/mod.ts";
 import {encodeBase64, decodeBase64} from "jsr:@std/encoding/base64";
 import {compress, decompress} from "./lzstring.ts";
+
+export async function loadRemoteJSON<T>(url: string): Promise<T> {
+    try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`Failed to fetch JSON: ${response.statusText}`);
+        return await response.json();
+    } catch (error) {
+        console.error(`Error fetching JSON from ${url}:`, error);
+        throw error; // Rethrow error so callers can handle it
+    }
+}
+const mastTileKeys: string[] = await loadRemoteJSON("https://raw.githubusercontent.com/cafread/metrocity2024/main/res/mastTileKeys.json");
+const cityData: cityDatum[] = await loadRemoteJSON("https://raw.githubusercontent.com/cafread/metrocity2024/refs/heads/main/res/2020cities15k_trimmed.json");
 
 const startTs: number = (new Date()).getTime() / 1000;
 const kv = await Deno.openKv();
@@ -42,7 +55,7 @@ export async function handleMcRequest (request: Request, thisReq: reqStat): Prom
     if (!Array.isArray(inpData))                                                                               return new Response("Request is not array",    {status: 400});
     if (!inpData.every(x => typeof x === "object" && !Array.isArray(x) && x !== null))                         return new Response("Invalid request data",    {status: 400});
     if (!inpData.every(e => e.id && e.lat !== undefined && e.lon !== undefined && Object.keys(e).length <= 4)) return new Response("Invalid request keys",    {status: 400});
-    if (!inpData.every(e => Math.abs(e.lat) <= 85.0511287798066))                                              return new Response("Out of bounds latitude",  {status: 422});
+    if (!inpData.every(e => Math.abs(e.lat) <= 90))                                                            return new Response("Out of bounds latitude",  {status: 422});
     if (!inpData.every(e => !(e.lat === 0 && e.lon === 0)))                                                    return new Response("Null island found",       {status: 422});
     if (inpData.length > reqLim)                                                                               return new Response(`Limit of ${reqLim} locs`, {status: 413});
     // Assert that id is unique
@@ -78,9 +91,11 @@ export async function readTile (tileKey: string, locations: targArr): Promise<re
     }
     const mcData = decodeTile(tileData);
     return locations.map(loc => {
-        const mcn = cityData[mcData[loc.y * 256 + loc.x]] || "";
-        if (mcn    === '') return {"id": loc.id, "mc": mcn};
-        if (loc.cc === '') return {"id": loc.id, "mc": mcn};
+        const cityId = mcData[loc.y * 256 + loc.x];
+        const cityDatum = cityData.find(c => c.i === cityId);
+        const mcn = cityDatum?.n || "";
+        if (mcn    === "") return {"id": loc.id, "mc": mcn};
+        if (loc.cc === "") return {"id": loc.id, "mc": mcn};
         return validateBorder(loc.cc, mcn.slice(-2), {"id": loc.id, "mc": mcn});
     });
 }
@@ -134,18 +149,46 @@ export async function handleGithubWebhook(req: Request): Promise<Response> {
     }
     console.log("Signature verified, proceeding");
     const payload = JSON.parse(new TextDecoder().decode(body));
-    const updatedFiles = new Set<string>();
-    // Collect updated file names from the payload
+    const updatedTileKeys = new Set<string>();
+    // Collect updated tiles names from the payload
     for (const commit of payload.commits) {
         for (const file of commit.modified) {
             if (file.startsWith("tiles/") && file.endsWith(".png")) {
-                const fileName = file.split("/").pop()!;
-                updatedFiles.add(fileName);
+                const tileKey = file.split("/").pop()!.replace(/\.png$/, "");
+                if (isValidTileKey(tileKey)) updatedTileKeys.add(tileKey);
+            } else if (file === "res/2020cities15k_trimmed.json") {
+                const diffPatch = commit.patch;
+                const diffLines = diffPatch.split("\n");
+                for (const line of diffLines) {
+                    if (line.startsWith("+") || line.startsWith("-")) {
+                        const trimmedLine = line.slice(1).replace(/,$/, "").trim(); // Remove "+" or "-" and any trailing comma
+                        try {
+                            const parsedEntry = JSON.parse(trimmedLine);
+                            const loc: latLon = {lat: parsedEntry.la, lon:parsedEntry.lo};
+                            // Project the latitude-longitude pair and generate a tile key
+                            const tileKey = genTileKey(mercator(loc));
+                            if (isValidTileKey(tileKey)) updatedTileKeys.add(tileKey);
+                        } catch (_err) {
+                            console.error(`Error parsing diff line: ${line}`);
+                        }
+                    }
+                }
+            } else if (file === "res/masTileKeys.json") {
+                const diffPatch = commit.patch;
+                const diffLines = diffPatch.split("\n");
+                for (const line of diffLines) {
+                    if (line.startsWith("+") || line.startsWith("-")) {
+                        const trimmedLine = line.slice(1).replace(/,$/, "").trim(); // Remove "+" or "-"
+                        const tileKey = trimmedLine;
+                        if (isValidTileKey(tileKey)) updatedTileKeys.add(tileKey);
+                    }
+                }
             }
         }
     }
+
     // Schedule cache deletion for updated files after a 10-minute delay
-    for (const tileKey of updatedFiles) {
+    for (const tileKey of updatedTileKeys) {
         setTimeout(async () => {
             await kv.delete(["tile", tileKey]);
             console.log(`Cache cleared for updated tile: ${tileKey}`);
@@ -153,6 +196,11 @@ export async function handleGithubWebhook(req: Request): Promise<Response> {
     }
     // Immediate response, not delayed by cache clearing
     return new Response("Webhook processed", {status: 200});
+}
+
+function isValidTileKey(str: string): boolean {
+    const regex = /^[0-9]{3}_[0-9]{3}$/;
+    return regex.test(str);
 }
 
 export async function onStart () {

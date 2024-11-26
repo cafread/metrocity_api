@@ -1,5 +1,8 @@
-import {compressionDebug, colorToId, openBorders} from './lookups.ts';
+import {compressionDebug, openBorders} from './lookups.ts';
 import {xy, res, latLon} from "./types.ts";
+import {loadRemoteJSON} from "./functions.ts"
+
+const colorToId: {[index: string]: number} = await loadRemoteJSON("https://raw.githubusercontent.com/cafread/metrocity2024/refs/heads/main/res/colorToId.json");
 
 export function mercator (loc: latLon): xy {
     const mapDim: number = 32768; // 256 pixels * 128 tiles
@@ -13,6 +16,8 @@ export function mercator (loc: latLon): xy {
 }
 
 export function genTileKey (prj: xy): string {
+    // Return "" when latitude is > 85
+    if (isNaN(prj[0])) return "";
     return prj.map(n => lpad(Math.floor(n / 256).toString(), 3, "0")).join("_");
 }
 
