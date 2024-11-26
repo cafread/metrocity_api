@@ -3,11 +3,11 @@
  *
  * SPDX-License-Identifier: MIT
  */
-export type Dictionary = Record<string, number>;
-export type PendingDictionary = Record<string, true>;
-export function _compress(uncompressed: null, bitsPerChar: number, getCharFromInt: (a: number) => string): "";
-export function _compress(uncompressed: string, bitsPerChar: number, getCharFromInt: (a: number) => string): string;
-export function _compress(
+type Dictionary = Record<string, number>;
+type PendingDictionary = Record<string, true>;
+function _compress(uncompressed: null, bitsPerChar: number, getCharFromInt: (a: number) => string): "";
+function _compress(uncompressed: string, bitsPerChar: number, getCharFromInt: (a: number) => string): string;
+function _compress(
     uncompressed: string | null,
     bitsPerChar: number,
     getCharFromInt: (a: number) => string,
@@ -224,12 +224,12 @@ export function compress(input: string | null) {
     return _compress(input, 16, (a: number) => String.fromCharCode(a));
 }
 // Decompression
-export interface DecompressionTracker {
+interface DecompressionTracker {
     val: number;
     position: number;
     index: number;
 }
-export function _decompress(length: number, resetValue: number, getNextValue: (a: number) => number) {
+function _decompress(length: number, resetValue: number, getNextValue: (a: number) => number) {
     const dictionary: string[] = [];
     const result: string[] = [];
     const data: DecompressionTracker = {
@@ -385,6 +385,6 @@ export function _decompress(length: number, resetValue: number, getNextValue: (a
 }
 export function decompress(compressed: string | null): string {
     if (compressed == null) return "";
-    if (compressed == "") return null;
-    return _decompress(compressed.length, 32768, (index) => compressed.charCodeAt(index));
+    if (compressed == "") return "";
+    return _decompress(compressed.length, 32768, (index) => compressed.charCodeAt(index)) || "";
 }
