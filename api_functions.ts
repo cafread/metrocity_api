@@ -1,6 +1,6 @@
 import {createCanvas, loadImage} from "https://deno.land/x/canvas@v1.4.2/mod.ts";
 import {testData} from './lookups.ts';
-import {xy, latLon, rawData, targ, targArr, resArr, resArrArr, retObj, reqStat, tileCache, cityDatum} from "./types.ts";
+import {xy, latLon, rawData, targ, targArr, resArr, resArrArr, retObj, reqStat, tileCache, cityDatum, changeLog} from "./types.ts";
 import {mercator, genTileKey, rgbToId, makeUrl, validateBorder} from "./geo_functions.ts";
 import {equals} from "https://deno.land/std/bytes/mod.ts";
 import {encodeBase64, decodeBase64} from "jsr:@std/encoding/base64";
@@ -71,7 +71,7 @@ export async function readTile (tileKey: string, locations: targArr): Promise<re
     const entry = await kv.get<tileCache>(["tile", tileKey]); // Only need to check for the first slice existing
     if (entry.value) { // If available, read from cache
         tileData = entry.value;
-    } else {
+    } else { // Retrieve from github remotely
         const url = makeUrl(tileKey);
         const cvs = createCanvas(256, 256);
         const ctx = cvs.getContext("2d");
@@ -79,6 +79,8 @@ export async function readTile (tileKey: string, locations: targArr): Promise<re
         ctx.drawImage(image, 0, 0);
         tileData = encodeTile(ctx.getImageData(0, 0, 256, 256).data);
         kv.set(["tile", tileKey], tileData);
+        // Update the change log for each metro city id read - not zero though!
+        updateCityChangeLog(new Set(tileData.idMap.slice(1)));
     }
     const mcData = decodeTile(tileData);
     return locations.map(loc => {
@@ -130,6 +132,69 @@ export function status (): string {
     return msg;
 }
 
+export async function getChangeLog (): Promise<Response> {
+    // Retrieve the Deno KV change log and return it
+    const tileLog = await kv.get<changeLog>(["changelog", "tiles"]);
+    const cityLog = await kv.get<changeLog>(["changelog", "cities"]);
+    // Initialise the change log, if it is currently empty
+    if (!tileLog?.value) updateTileChangeLog(new Set());
+    if (!cityLog?.value) updateCityChangeLog(new Set());
+    // Given the endpoint, returning a metro city name : id map as well is useful
+    const nameMap = Object.fromEntries(cityData.map(city => [city.i, city.n]));
+    const res = {
+        "tiles": tileLog?.value ?? {},
+        "mcids": cityLog?.value ?? {},
+        "names": nameMap
+    };
+    return new Response(JSON.stringify(res), {"status": 200, headers: {"content-type": "application/json"}});
+}
+
+async function updateTileChangeLog (tileKeysChanged: Set<string>): Promise<boolean> {
+    try {
+        // Build a full version, handle first run, ensure 100 % coverage
+        const newLog: changeLog = Object.fromEntries(mastTileKeys.map(tk => [tk, Date.now()]));
+        const tkCache = await kv.get<changeLog>(["changelog", "tiles"]);
+        if (tkCache.value) { // If the cache hit, handle updates
+            // Apply previous updated timestamps, where the key is not in the updated list
+            for (let [tileKey, updateTS] of Object.entries(tkCache.value)) {
+                if (tileKeysChanged.has(tileKey) === false) {
+                    newLog[tileKey] = updateTS;
+                }
+            }
+        }
+        // Cache the result
+        await kv.set(["changelog", "tiles"], newLog);
+        return true;
+    }
+    catch (err) {
+        console.error("Error writing tile change log to Deno KV:", err instanceof Error ? err.message : String(err));
+        return false;
+    }
+}
+
+async function updateCityChangeLog(metroCityIDsChanged: Set<number>): Promise<boolean> {
+    try {
+        // Build a full version, handle first run, ensure 100 % coverage
+        const newLog: changeLog = Object.fromEntries(cityData.map(c => [c.i, Date.now()]));
+        const tkCache = await kv.get<changeLog>(["changelog", "cities"]);
+        if (tkCache.value) { // If the cache hit, handle updates
+            // Apply previous updated timestamps, where the key is not in the updated list
+            for (let [mcid, updateTS] of Object.entries(tkCache.value)) {
+                if (metroCityIDsChanged.has(+mcid) === false) {
+                    newLog[mcid] = updateTS;
+                }
+            }
+        }
+        // Cache the result
+        await kv.set(["changelog", "cities"], newLog);
+        return true;
+    }
+    catch (err: unknown) {
+        console.error("Error writing city change log to Deno KV:", err instanceof Error ? err.message : String(err));
+        return false;
+    }
+}
+
 // Helper function to handle incoming GitHub webhook payload
 export async function handleGithubWebhook(req: Request): Promise<Response> {
     console.log("Potential tile update, checking for changes");
@@ -176,8 +241,27 @@ export async function handleGithubWebhook(req: Request): Promise<Response> {
                 }
             }
         }
+        // Where a tile is removed, update the city change log for those affected
+        // Updated tiles will have metro city change log applied when they are read
+        let editedCityIds: Set<number> = new Set();
+        for (const file of commit.removed) {
+            if (file.startsWith("tiles/") && file.endsWith(".png")) {
+                const tileKey = file.split("/").pop()!.replace(/\.png$/, "");
+                if (isValidTileKey(tileKey)) {
+                    updatedTileKeys.add(tileKey);
+                    // Retrieve the affected metro city ids from the kv cache and update in change log
+                    const entry = await kv.get<tileCache>(["tile", tileKey]);
+                    if (entry.value) {
+                        const cityIds: Set<number> = new Set(entry.value.idMap.slice(1)); // Exclude 0
+                        editedCityIds = editedCityIds.union(cityIds);
+                    }
+                }
+            }
+        }
+        updateCityChangeLog(editedCityIds);
     }
-
+    // Update the tile change log
+    updateTileChangeLog(updatedTileKeys);
     // Schedule cache deletion for updated files after a 10-minute delay
     for (const tileKey of updatedTileKeys) {
         setTimeout(async () => {
