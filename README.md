@@ -21,7 +21,7 @@ The unique `id` property is the same as that provided in the request, a string o
 ## GET request routes
 `/status`    returns uptime and usage if the server is running  
 `/info`      links here where the documentation resides  
-`/version`   returns version information
+`/version`   returns version information  
 `/changelog` returns a unix timestamp for when each tile & metro city was last added / edited / deleted and a metro city id : name map
 
 ## Running locally
