@@ -1,9 +1,9 @@
-import {tileCache} from "./types.ts";
+import {tileCache, result, retObj} from "./types.ts";
 import {encodeBase64, decodeBase64} from "jsr:@std/encoding/base64";
 import {compress, decompress} from "./lzstring.ts";
 import {compressionDebug} from './lookups.ts';
 
-const colorToId: {[index: string]: number} = await loadRemoteJSON("https://raw.githubusercontent.com/cafread/metrocity2024/refs/heads/main/res/colorToId.json");
+const colorToId: {[index: string]: number} = await loadRemoteJSON("https://raw.githubusercontent.com/cafread/metrocity2024/main/res/colorToId.json");
 
 export async function loadRemoteJSON<T> (url: string): Promise<T> {
     try {
@@ -48,19 +48,27 @@ export function decodeTile (tileCache: tileCache): number[] {
     return Array.from(codedMcs).map(i => tileCache.idMap[i]);
 }
 
-export function rgbToId ([r, g, b]: Uint8ClampedArray, nolog=false) {
+export function rgbToId ([r, g, b]: Uint8ClampedArray) {
     if ([r, g, b].join("") === "000") return 0;
     if ([r, g, b].join("") === "255255255") return 0;
     let code = "rgba(" + r + "," + g + "," + b + ",1)";
     if (colorToId[code]) return colorToId[code];
+    // Should be vestigial and never run, but dealt with an old bug in browser many years ago
+    // Handles the case where a colour is read, but the value is off by one for some reason
     for (const per of compressionDebug) {
         code = "rgba(" + (r + per.r) + "," + (g + per.g) + "," + (b + per.b) + ",1)";
         if (colorToId[code]) return colorToId[code];
     }
-    if (!nolog) console.log("Sample not matched", [r, g, b]);
+    console.log("Sample not matched", [r, g, b]);
     return 0;
 }
 
 export function makeUrl (tileKey: string): string {
     return 'https://cafread.github.io/metrocity2024/tiles/' + tileKey + '.png';
+}
+
+export function formatResult (arr: result[][]): retObj {
+    const result: retObj = {};
+    for (const rA of arr) for (const r of rA) result[r.id] = r.mc;
+    return result;
 }

@@ -1,9 +1,9 @@
-import {createCanvas, loadImage} from "https://deno.land/x/canvas@v1.4.2/mod.ts";
+import {equals} from "jsr:@std/bytes";
+import {createCanvas, loadImage} from "jsr:@gfx/canvas-wasm";
 import {testData} from './lookups.ts';
-import {xy, latLon, rawData, targ, targArr, resArr, resArrArr, retObj, reqStat, tileCache, cityDatum, cities, changeLog} from "./types.ts";
+import {xy, latLon, rawDatum, target, result, retObj, reqStat, tileCache, rawCity, cities, changeLog} from "./types.ts";
 import {mercator, genTileKey, validateBorder} from "./geo_functions.ts";
-import {equals} from "https://deno.land/std/bytes/mod.ts";
-import {loadRemoteJSON, isValidTileKey, encodeTile, makeUrl, decodeTile} from "./utils.ts";
+import {loadRemoteJSON, isValidTileKey, encodeTile, makeUrl, decodeTile, formatResult} from "./utils.ts";
 
 const startTs: number = Date.now() / 1000;
 const kv = await Deno.openKv();
@@ -19,7 +19,7 @@ const mastTileSet: Set<string> = await (async () => {
 })();
 
 const masterCities: cities = await (async () => {
-    const inp: cityDatum[] = await loadRemoteJSON("https://raw.githubusercontent.com/cafread/metrocity2024/main/res/2020cities15k_trimmed.json");
+    const inp: rawCity[] = await loadRemoteJSON("https://raw.githubusercontent.com/cafread/metrocity2024/main/res/2020cities15k_trimmed.json");
     return Object.fromEntries(inp.map(c => [c.i, {p: c.p, n: c.n, la: c.la, lo: c.lo}]));
 })();
 
@@ -40,10 +40,10 @@ export async function handleMcRequest (request: Request, thisReq: reqStat): Prom
         // If there are no requests passed, run test data
         const toRead = inpData.length > 0 ? prepData(inpData) : prepData(testData);
         // Wait for all results, as the read function is per tile
-        const readPromises: Promise<resArr>[] = [];
+        const readPromises: Promise<result[]>[] = [];
         for (const tileKey of Object.keys(toRead)) readPromises.push(readTile(tileKey, toRead[tileKey]));
         // Read and cache the tile data then calculate, format & return results
-        const values: resArrArr = await Promise.all(readPromises);
+        const values: result[][] = await Promise.all(readPromises);
         const result: retObj = formatResult(values);
         thisReq.endTs = Date.now();
         console.log(thisReq);
@@ -55,7 +55,7 @@ export async function handleMcRequest (request: Request, thisReq: reqStat): Prom
     }
 }
 
-async function readTile (tileKey: string, locations: targArr): Promise<resArr> {
+async function readTile (tileKey: string, locations: target[]): Promise<result[]> {
     if (!mastTileSet.has(tileKey)) return locations.map(t => ({"id": t.id, "mc": ''}));
     let tileData: tileCache;
     const entry = await kv.get<tileCache>(["tile", tileKey]); // Only need to check for the first slice existing
@@ -81,17 +81,17 @@ async function readTile (tileKey: string, locations: targArr): Promise<resArr> {
     });
 }
 
-function prepData (rawData: rawData): {[index: string]: targArr} {
+function prepData (rawData: rawDatum[]): {[index: string]: target[]} {
     // Project the lat long, calculate the tileKey
     // Return projected values grouped by tileKey
-    const res: {[index: string]: targArr} = {};
+    const res: {[index: string]: target[]} = {};
     for (const d of rawData) {
         const p: xy = mercator({lat: d.lat, lon: d.lon});
         const tileKey: string = genTileKey(p);
         const x = Math.floor(p[0]) % 256;
         const y = Math.floor(p[1]) % 256;
         const cc: string = (d.cc || '').toUpperCase(); // cc is optional in request
-        const thisTarg: targ = {id: d.id, x: x, y: y, cc: cc};
+        const thisTarg: target = {id: d.id, x: x, y: y, cc: cc};
         if (res[tileKey]) {
             res[tileKey].push(thisTarg)
         } else {
@@ -99,12 +99,6 @@ function prepData (rawData: rawData): {[index: string]: targArr} {
         }
     };
     return res;
-}
-
-function formatResult (arr: resArrArr): retObj {
-    const result: retObj = {};
-    for (const rA of arr) for (const r of rA) result[r.id] = r.mc;
-    return result;
 }
 
 export function status (): string {
@@ -144,7 +138,7 @@ async function updateTileChangeLog (tileKeysChanged: Set<string>): Promise<boole
         const tkCache = await kv.get<changeLog>(["changelog", "tiles"]);
         if (tkCache.value) { // If the cache hit, handle updates
             // Apply previous updated timestamps, where the key is not in the updated list
-            for (let [tileKey, updateTS] of Object.entries(tkCache.value)) {
+            for (const [tileKey, updateTS] of Object.entries(tkCache.value)) {
                 if (tileKeysChanged.has(tileKey) === false) {
                     newLog[tileKey] = updateTS;
                 }
@@ -167,7 +161,7 @@ async function updateCityChangeLog (metroCityIDsChanged: Set<number>): Promise<b
         const tkCache = await kv.get<changeLog>(["changelog", "cities"]);
         if (tkCache.value) { // If the cache hit, handle updates
             // Apply previous updated timestamps, where the key is not in the updated list
-            for (let [mcid, updateTS] of Object.entries(tkCache.value)) {
+            for (const [mcid, updateTS] of Object.entries(tkCache.value)) {
                 if (metroCityIDsChanged.has(+mcid) === false) {
                     newLog[mcid] = updateTS;
                 }
