@@ -40,9 +40,9 @@ function decodeTile (tileCache: tileCache): number[] {
 }
 
 export async function handleMcRequest (request: Request, thisReq: reqStat): Promise<Response> {
-    const inpData: JSON = await request.json();
     const reqLim = parseInt(Deno.env.get("reqLim") || "1000000", 10);
     try {
+        const inpData: JSON = await request.json();
         // Assert that the request payload is appropriate
         if (!Array.isArray(inpData))                                                                               return new Response("Request is not array",    {status: 400});
         if (!inpData.every(x => typeof x === "object" && !Array.isArray(x) && x !== null))                         return new Response("Invalid request data",    {status: 400});
