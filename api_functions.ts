@@ -42,27 +42,33 @@ function decodeTile (tileCache: tileCache): number[] {
 
 export async function handleMcRequest (request: Request, thisReq: reqStat): Promise<Response> {
     const inpData: JSON = await request.json();
-    // Assert that the request payload is appropriate
-    if (!Array.isArray(inpData))                                                                               return new Response("Request is not array",    {status: 400});
-    if (!inpData.every(x => typeof x === "object" && !Array.isArray(x) && x !== null))                         return new Response("Invalid request data",    {status: 400});
-    if (!inpData.every(e => e.id && e.lat !== undefined && e.lon !== undefined && Object.keys(e).length <= 4)) return new Response("Invalid request keys",    {status: 400});
-    if (!inpData.every(e => Math.abs(e.lat) <= 90))                                                            return new Response("Out of bounds latitude",  {status: 422});
-    if (!inpData.every(e => !(e.lat === 0 && e.lon === 0)))                                                    return new Response("Null island found",       {status: 422});
-    if (inpData.length > reqLim)                                                                               return new Response(`Limit of ${reqLim} locs`, {status: 413});
-    // Assert that id is unique
-    if (inpData.length > (new Set(inpData.map(l => l.id))).size)                                               return new Response("Element ids not unique",  {status: 400});
-    thisReq.reqCount = inpData.length;
-    // If there are no requests passed, run test data
-    const toRead = inpData.length > 0 ? prepData(inpData) : prepData(testData);
-    // Wait for all results, as the read function is per tile
-    const readPromises: Promise<resArr>[] = [];
-    for (const tileKey of Object.keys(toRead)) readPromises.push(readTile(tileKey, toRead[tileKey]));
-    // Read and cache the tile data then calculate, format & return results
-    let result: retObj = {};
-    await Promise.all(readPromises).then((values: resArrArr) => result = resFmt(values));
-    thisReq.endTs = (new Date()).getTime();
-    console.log(thisReq);
-    return new Response(JSON.stringify(result), {"status": 200, headers: {"content-type": "application/json"}});
+    try {
+        // Assert that the request payload is appropriate
+        if (!Array.isArray(inpData))                                                                               return new Response("Request is not array",    {status: 400});
+        if (!inpData.every(x => typeof x === "object" && !Array.isArray(x) && x !== null))                         return new Response("Invalid request data",    {status: 400});
+        if (!inpData.every(e => e.id && e.lat !== undefined && e.lon !== undefined && Object.keys(e).length <= 4)) return new Response("Invalid request keys",    {status: 400});
+        if (!inpData.every(e => Math.abs(e.lat) <= 90))                                                            return new Response("Out of bounds latitude",  {status: 422});
+        if (!inpData.every(e => !(e.lat === 0 && e.lon === 0)))                                                    return new Response("Null island found",       {status: 422});
+        if (inpData.length > reqLim)                                                                               return new Response(`Limit of ${reqLim} locs`, {status: 413});
+        // Assert that id is unique
+        if (inpData.length > (new Set(inpData.map(l => l.id))).size)                                               return new Response("Element ids not unique",  {status: 400});
+        thisReq.reqCount = inpData.length;
+        // If there are no requests passed, run test data
+        const toRead = inpData.length > 0 ? prepData(inpData) : prepData(testData);
+        // Wait for all results, as the read function is per tile
+        const readPromises: Promise<resArr>[] = [];
+        for (const tileKey of Object.keys(toRead)) readPromises.push(readTile(tileKey, toRead[tileKey]));
+        // Read and cache the tile data then calculate, format & return results
+        let result: retObj = {};
+        await Promise.all(readPromises).then((values: resArrArr) => result = resFmt(values));
+        thisReq.endTs = (new Date()).getTime();
+        console.log(thisReq);
+        return new Response(JSON.stringify(result), {"status": 200, headers: {"content-type": "application/json"}});
+    }
+    catch (err) {
+        console.error("Invalid mc_api request:", err instanceof Error ? err.message : String(err));
+        return new Response("Invalid request data", {status: 400});
+    }
 }
 
 export async function readTile (tileKey: string, locations: targArr): Promise<resArr> {
@@ -258,10 +264,10 @@ export async function handleGithubWebhook(req: Request): Promise<Response> {
                 }
             }
         }
-        updateCityChangeLog(editedCityIds);
+        if (editedCityIds.size > 0) updateCityChangeLog(editedCityIds);
     }
     // Update the tile change log
-    updateTileChangeLog(updatedTileKeys);
+    if (updatedTileKeys.size > 0) updateTileChangeLog(updatedTileKeys);
     // Schedule cache deletion for updated files after a 10-minute delay
     for (const tileKey of updatedTileKeys) {
         setTimeout(async () => {
