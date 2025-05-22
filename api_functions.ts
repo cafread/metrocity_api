@@ -9,7 +9,6 @@ import {loadRemoteJSON, isValidTileKey} from "./utils.ts";
 
 const mastTileKeys: string[] = await loadRemoteJSON("https://raw.githubusercontent.com/cafread/metrocity2024/main/res/mastTileKeys.json");
 const cityData: cityDatum[] = await loadRemoteJSON("https://raw.githubusercontent.com/cafread/metrocity2024/refs/heads/main/res/2020cities15k_trimmed.json");
-
 const startTs: number = (new Date()).getTime() / 1000;
 const kv = await Deno.openKv();
 // 512MB max memory is available on Deno deploy and kv only permits values up to 64KiB
@@ -42,6 +41,7 @@ function decodeTile (tileCache: tileCache): number[] {
 
 export async function handleMcRequest (request: Request, thisReq: reqStat): Promise<Response> {
     const inpData: JSON = await request.json();
+    const reqLim = parseInt(Deno.env.get("reqLim") || "1000000", 10);
     try {
         // Assert that the request payload is appropriate
         if (!Array.isArray(inpData))                                                                               return new Response("Request is not array",    {status: 400});
@@ -319,9 +319,8 @@ async function buildCacheWithDelay(tileKeys: string[]) {
 }
 
 // Function to verify the GitHub signature using HMAC SHA-256
-const SECRET = Deno.env.get("auth") || "";
-const reqLim = parseInt(Deno.env.get("reqLim") || "1000000", 10);
 async function verifySignature(req: Request, body: Uint8Array): Promise<boolean> {
+    const SECRET = Deno.env.get("auth") || "";
     const signature = req.headers.get("X-Hub-Signature-256");
     if (!signature || !SECRET) return false;
     // Generate the HMAC SHA-256 hash of the body using the secret
