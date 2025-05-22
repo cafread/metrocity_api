@@ -3,6 +3,7 @@ export type strInt    = number | string;
 export type rawDatum  = {"id": strInt, "lat": number, "lon": number, "cc"?: string};
 export type rawData   = rawDatum[];
 export type cityDatum = {"i": number, "p": number, "n": string, "la": number, "lo": number};
+export type cities    = {[index: number]: {"p": number, "n": string, "la": number, "lo": number}};
 export type targ      = {"id": strInt, "x": number, "y": number, "cc": string};
 export type targArr   = {"id": strInt, "x": number, "y": number, "cc": string}[];
 export type res       = {"id": strInt, "mc": string};

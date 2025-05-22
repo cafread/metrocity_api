@@ -1,15 +1,11 @@
 import {createCanvas, loadImage} from "https://deno.land/x/canvas@v1.4.2/mod.ts";
 import {testData} from './lookups.ts';
-import {xy, latLon, rawData, targ, targArr, resArr, resArrArr, retObj, reqStat, tileCache, cityDatum, changeLog} from "./types.ts";
-import {mercator, genTileKey, rgbToId, makeUrl, validateBorder} from "./geo_functions.ts";
+import {xy, latLon, rawData, targ, targArr, resArr, resArrArr, retObj, reqStat, tileCache, cityDatum, cities, changeLog} from "./types.ts";
+import {mercator, genTileKey, validateBorder} from "./geo_functions.ts";
 import {equals} from "https://deno.land/std/bytes/mod.ts";
-import {encodeBase64, decodeBase64} from "jsr:@std/encoding/base64";
-import {compress, decompress} from "./lzstring.ts";
-import {loadRemoteJSON, isValidTileKey} from "./utils.ts";
+import {loadRemoteJSON, isValidTileKey, encodeTile, makeUrl, decodeTile} from "./utils.ts";
 
-const mastTileKeys: string[] = await loadRemoteJSON("https://raw.githubusercontent.com/cafread/metrocity2024/main/res/mastTileKeys.json");
-const cityData: cityDatum[] = await loadRemoteJSON("https://raw.githubusercontent.com/cafread/metrocity2024/refs/heads/main/res/2020cities15k_trimmed.json");
-const startTs: number = (new Date()).getTime() / 1000;
+const startTs: number = Date.now() / 1000;
 const kv = await Deno.openKv();
 // 512MB max memory is available on Deno deploy and kv only permits values up to 64KiB
 // A Uint8ClampedArray size 256*256*4 is 2097152 bytes and there are 2370 tiles so far
@@ -17,27 +13,15 @@ const kv = await Deno.openKv();
 // The tileCache data structure is MUCH more memory efficient, using just 4.54 MiB total in kv
 // Data is expanded only when needed
 
-function encodeTile (tileData: Uint8ClampedArray): tileCache {
-    const tempArr = [];
-    const ids: number[] = [0]; // 0 = no metro city
-    for (let i = 0; i < 256*256*4; i+=4) {
-        const mcid = rgbToId(tileData.slice(i, i + 3));
-        let _id = ids.indexOf(mcid);
-        if (_id === -1) {
-            _id = ids.length;
-            ids.push(mcid);
-        }
-        tempArr.push(_id);
-    }
-    const datStr = compress(encodeBase64(new Uint8Array(tempArr)));
-    return {idMap: ids, datStr: datStr};
-}
+const mastTileSet: Set<string> = await (async () => {
+    const inp: string[] = await loadRemoteJSON("https://raw.githubusercontent.com/cafread/metrocity2024/main/res/mastTileKeys.json");
+    return new Set(inp);
+})();
 
-function decodeTile (tileCache: tileCache): number[] {
-    // Turn a tilecache data structure into a 256*256 long array of mcids
-    const codedMcs: Uint8Array = decodeBase64(decompress(tileCache.datStr));
-    return Array.from(codedMcs).map(i => tileCache.idMap[i]);
-}
+const masterCities: cities = await (async () => {
+    const inp: cityDatum[] = await loadRemoteJSON("https://raw.githubusercontent.com/cafread/metrocity2024/main/res/2020cities15k_trimmed.json");
+    return Object.fromEntries(inp.map(c => [c.i, {p: c.p, n: c.n, la: c.la, lo: c.lo}]));
+})();
 
 export async function handleMcRequest (request: Request, thisReq: reqStat): Promise<Response> {
     const reqLim = parseInt(Deno.env.get("reqLim") || "1000000", 10);
@@ -59,20 +43,20 @@ export async function handleMcRequest (request: Request, thisReq: reqStat): Prom
         const readPromises: Promise<resArr>[] = [];
         for (const tileKey of Object.keys(toRead)) readPromises.push(readTile(tileKey, toRead[tileKey]));
         // Read and cache the tile data then calculate, format & return results
-        let result: retObj = {};
-        await Promise.all(readPromises).then((values: resArrArr) => result = resFmt(values));
-        thisReq.endTs = (new Date()).getTime();
+        const values: resArrArr = await Promise.all(readPromises);
+        const result: retObj = formatResult(values);
+        thisReq.endTs = Date.now();
         console.log(thisReq);
         return new Response(JSON.stringify(result), {"status": 200, headers: {"content-type": "application/json"}});
     }
-    catch (err) {
+    catch (err: unknown) {
         console.error("Invalid mc_api request:", err instanceof Error ? err.message : String(err));
         return new Response("Invalid request data", {status: 400});
     }
 }
 
-export async function readTile (tileKey: string, locations: targArr): Promise<resArr> {
-    if (mastTileKeys.indexOf(tileKey) === -1) return locations.map(t => ({"id": t.id, "mc": ''}));
+async function readTile (tileKey: string, locations: targArr): Promise<resArr> {
+    if (!mastTileSet.has(tileKey)) return locations.map(t => ({"id": t.id, "mc": ''}));
     let tileData: tileCache;
     const entry = await kv.get<tileCache>(["tile", tileKey]); // Only need to check for the first slice existing
     if (entry.value) { // If available, read from cache
@@ -91,15 +75,13 @@ export async function readTile (tileKey: string, locations: targArr): Promise<re
     const mcData = decodeTile(tileData);
     return locations.map(loc => {
         const cityId = mcData[loc.y * 256 + loc.x];
-        const cityDatum = cityData.find(c => c.i === cityId);
-        const mcn = cityDatum?.n || "";
-        if (mcn    === "") return {"id": loc.id, "mc": mcn};
-        if (loc.cc === "") return {"id": loc.id, "mc": mcn};
-        return validateBorder(loc.cc, mcn.slice(-2), {"id": loc.id, "mc": mcn});
+        const mcn = masterCities[cityId]?.n;
+        if (!mcn || !loc.cc) return {id: loc.id, mc: mcn ?? ""};
+        return validateBorder(loc.cc, mcn.slice(-2), {id: loc.id, mc: mcn});
     });
 }
 
-export function prepData (rawData: rawData): {[index: string]: targArr} {
+function prepData (rawData: rawData): {[index: string]: targArr} {
     // Project the lat long, calculate the tileKey
     // Return projected values grouped by tileKey
     const res: {[index: string]: targArr} = {};
@@ -119,14 +101,14 @@ export function prepData (rawData: rawData): {[index: string]: targArr} {
     return res;
 }
 
-export function resFmt (arr: resArrArr): retObj {
+function formatResult (arr: resArrArr): retObj {
     const result: retObj = {};
     for (const rA of arr) for (const r of rA) result[r.id] = r.mc;
     return result;
 }
 
 export function status (): string {
-    const upTim = (new Date()).getTime() / 1000 - startTs;
+    const upTim = Date.now() / 1000 - startTs;
     const upDay = (Math.floor((upTim / (60*60*24)))     ).toString();
     const upHrs = (Math.floor((upTim / (60*60   ))) % 24).toString();
     const upMin = (Math.floor((upTim / (60      ))) % 60).toString();
@@ -146,7 +128,7 @@ export async function getChangeLog (): Promise<Response> {
     if (!tileLog?.value) updateTileChangeLog(new Set());
     if (!cityLog?.value) updateCityChangeLog(new Set());
     // Given the endpoint, returning a metro city name : id map as well is useful
-    const nameMap = Object.fromEntries(cityData.map(city => [city.i, city.n]));
+    const nameMap: Record<number, string> = Object.fromEntries(Object.entries(masterCities).map(([id, info]) => [Number(id), info.n]));
     const res = {
         "tiles": tileLog?.value ?? {},
         "mcids": cityLog?.value ?? {},
@@ -158,7 +140,7 @@ export async function getChangeLog (): Promise<Response> {
 async function updateTileChangeLog (tileKeysChanged: Set<string>): Promise<boolean> {
     try {
         // Build a full version, handle first run, ensure 100 % coverage
-        const newLog: changeLog = Object.fromEntries(mastTileKeys.map(tk => [tk, Date.now()]));
+        const newLog: changeLog = Object.fromEntries([...mastTileSet].map(tk => [tk, Date.now()]));
         const tkCache = await kv.get<changeLog>(["changelog", "tiles"]);
         if (tkCache.value) { // If the cache hit, handle updates
             // Apply previous updated timestamps, where the key is not in the updated list
@@ -172,16 +154,16 @@ async function updateTileChangeLog (tileKeysChanged: Set<string>): Promise<boole
         await kv.set(["changelog", "tiles"], newLog);
         return true;
     }
-    catch (err) {
+    catch (err: unknown) {
         console.error("Error writing tile change log to Deno KV:", err instanceof Error ? err.message : String(err));
         return false;
     }
 }
 
-async function updateCityChangeLog(metroCityIDsChanged: Set<number>): Promise<boolean> {
+async function updateCityChangeLog (metroCityIDsChanged: Set<number>): Promise<boolean> {
     try {
         // Build a full version, handle first run, ensure 100 % coverage
-        const newLog: changeLog = Object.fromEntries(cityData.map(c => [c.i, Date.now()]));
+        const newLog: changeLog = Object.fromEntries(Object.keys(masterCities).map((id) => [Number(id), Date.now()]));
         const tkCache = await kv.get<changeLog>(["changelog", "cities"]);
         if (tkCache.value) { // If the cache hit, handle updates
             // Apply previous updated timestamps, where the key is not in the updated list
@@ -202,7 +184,7 @@ async function updateCityChangeLog(metroCityIDsChanged: Set<number>): Promise<bo
 }
 
 // Helper function to handle incoming GitHub webhook payload
-export async function handleGithubWebhook(req: Request): Promise<Response> {
+export async function handleGithubWebhook (req: Request): Promise<Response> {
     console.log("Potential tile update, checking for changes");
     const body = new Uint8Array(await req.arrayBuffer());
     if (!(await verifySignature(req, body))) {
@@ -230,7 +212,7 @@ export async function handleGithubWebhook(req: Request): Promise<Response> {
                             // Project the latitude-longitude pair and generate a tile key
                             const tileKey = genTileKey(mercator(loc));
                             if (isValidTileKey(tileKey)) updatedTileKeys.add(tileKey);
-                        } catch (_err) {
+                        } catch (_err: unknown) {
                             console.error(`Error parsing diff line: ${line}`);
                         }
                     }
@@ -281,15 +263,14 @@ export async function handleGithubWebhook(req: Request): Promise<Response> {
 
 export async function onStart () {
     // Check that the kv store has good coverage of the tileset
-    const mastTileSet = new Set(mastTileKeys);
-    const cacheStatus = Object.fromEntries(mastTileKeys.map(k => [k, 0]));
+    const cacheStatus = Object.fromEntries([...mastTileSet].map(k => [k, 0]));
     try {
         for await (const entry of kv.list({prefix: ["tile"]})) {
             const key = entry.key[1].toString();
             if (mastTileSet.has(key)) cacheStatus[key] = 1; // Mark present
         }
-    } catch (error) {
-        console.error("Error accessing Deno KV:", error);
+    } catch (err: unknown) {
+        console.error("Error accessing Deno KV:", err instanceof Error ? err.message : String(err));
     }
     const uncachedTiles = Object.entries(cacheStatus)
         .filter(([_k, v]) => v === 0)
@@ -299,7 +280,7 @@ export async function onStart () {
 }
 
 // Cache the requested tile data with a delay per tile
-async function buildCacheWithDelay(tileKeys: string[]) {
+function buildCacheWithDelay (tileKeys: string[]) {
     let index = 0;
     const intervalId = setInterval(async () => {
         if (index >= tileKeys.length) {
@@ -311,15 +292,15 @@ async function buildCacheWithDelay(tileKeys: string[]) {
         try {
             await readTile(tileKey, []);
             console.log(`Processed tile: ${tileKey}`);
-        } catch(error) {
-            console.error(`Failed to process tile ${tileKey}:`, error);
+        } catch(err: unknown) {
+            console.error(`Failed to process tile ${tileKey}:`, err instanceof Error ? err.message : String(err));
         }
         index++;
     }, 400); // Delay between calls
 }
 
 // Function to verify the GitHub signature using HMAC SHA-256
-async function verifySignature(req: Request, body: Uint8Array): Promise<boolean> {
+async function verifySignature (req: Request, body: Uint8Array): Promise<boolean> {
     const SECRET = Deno.env.get("auth") || "";
     const signature = req.headers.get("X-Hub-Signature-256");
     if (!signature || !SECRET) return false;

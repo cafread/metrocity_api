@@ -1,8 +1,6 @@
-import {compressionDebug, openBorders} from './lookups.ts';
+import {openBorders} from './lookups.ts';
 import {xy, res, latLon} from "./types.ts";
-import {loadRemoteJSON, lpad} from "./utils.ts";
-
-const colorToId: {[index: string]: number} = await loadRemoteJSON("https://raw.githubusercontent.com/cafread/metrocity2024/refs/heads/main/res/colorToId.json");
+import {leftPad} from "./utils.ts";
 
 export function mercator (loc: latLon): xy {
     const mapDim: number = 32768; // 256 pixels * 128 tiles
@@ -18,24 +16,7 @@ export function mercator (loc: latLon): xy {
 export function genTileKey (prj: xy): string {
     // Return "" when latitude is > 85
     if (isNaN(prj[0])) return "";
-    return prj.map(n => lpad(Math.floor(n / 256).toString(), 3, "0")).join("_");
-}
-
-export function rgbToId ([r, g, b]: Uint8ClampedArray, nolog=false) {
-    if ([r, g, b].join("") === "000") return 0;
-    if ([r, g, b].join("") === "255255255") return 0;
-    let code = "rgba(" + r + "," + g + "," + b + ",1)";
-    if (colorToId[code]) return colorToId[code];
-    for (const per of compressionDebug) {
-        code = "rgba(" + (r + per.r) + "," + (g + per.g) + "," + (b + per.b) + ",1)";
-        if (colorToId[code]) return colorToId[code];
-    }
-    if (!nolog) console.log("Sample not matched", [r, g, b]);
-    return 0;
-}
-
-export function makeUrl (tileKey: string): string {
-    return 'https://cafread.github.io/metrocity2024/tiles/' + tileKey + '.png';
+    return prj.map(n => leftPad(Math.floor(n / 256).toString(), 3, "0")).join("_");
 }
 
 export function validateBorder (cc: string, mc_cc: string, res: res): res {
