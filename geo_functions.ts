@@ -1,8 +1,8 @@
 import {openBorders} from './lookups.ts';
-import {xy, res, latLon} from "./types.ts";
+import {baseResult, geoPoint} from "./types.ts";
 import {leftPad} from "./utils.ts";
 
-export function mercator (loc: latLon): xy {
+export function mercator (loc: geoPoint): [number, number] {
     const mapDim: number = 32768; // 256 pixels * 128 tiles
     if (Math.abs(loc.lat) > 85.0511287798066) return [NaN, NaN]; // Assert latitude limits
     loc.lon = (loc.lon % 360 + 540) % 360 - 180; // Handle longitude rollover
@@ -13,13 +13,13 @@ export function mercator (loc: latLon): xy {
     return [x, y];
 }
 
-export function genTileKey (prj: xy): string {
+export function genTileKey (prj: [number, number]): string {
     // Return "" when latitude is > 85
     if (isNaN(prj[0])) return "";
     return prj.map(n => leftPad(Math.floor(n / 256).toString(), 3, "0")).join("_");
 }
 
-export function validateBorder (cc: string, mc_cc: string, res: res): res {
+export function validateBorder (cc: string, mc_cc: string, res: baseResult): baseResult {
     if (cc === 'SG') return {"id": res.id, "mc": 'Singapore, SG'};
     if (cc === 'HK') return {"id": res.id, "mc": 'Hong Kong, HK'};
     if (cc === 'MO') return {"id": res.id, "mc": 'Macau, (MO), CN'};

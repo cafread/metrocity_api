@@ -1,4 +1,4 @@
-import {rawDatum} from "./types.ts";
+import {rawInput} from "./types.ts";
 
 export const compressionDebug: {[index: string]: number}[] = [
     { "r": 0, "g": 0, "b": 1 }, { "r": 0, "g": 0, "b": -1 }, { "r": 0, "g": 1, "b": 0 },
@@ -61,7 +61,7 @@ export const openBorders: {[index: string]: string[]} = {
     "MF": ["SX"],
     "SX": ["MF"]
 };
-export const testData: rawDatum[] = [
+export const testData: rawInput[] = [
     {"id":  1, "lat":   37.945522, "lon":   23.668790, "cc": "GR"},
     {"id":  2, "lat":   59.506506, "lon":   17.921503, "cc": "SE"},
     {"id":  3, "lat":   39.186710, "lon":  -77.252235, "cc": "US"},

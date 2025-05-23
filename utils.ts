@@ -1,4 +1,4 @@
-import {tileCache, result, retObj} from "./types.ts";
+import {tileCache, baseResult, resultMap} from "./types.ts";
 import {encodeBase64, decodeBase64} from "jsr:@std/encoding/base64";
 import {compress, decompress} from "./lzstring.ts";
 import {compressionDebug} from './lookups.ts';
@@ -67,8 +67,8 @@ export function makeUrl (tileKey: string): string {
     return 'https://cafread.github.io/metrocity2024/tiles/' + tileKey + '.png';
 }
 
-export function formatResult (arr: result[][]): retObj {
-    const result: retObj = {};
+export function formatResult (arr: baseResult[][]): resultMap {
+    const result: resultMap = {};
     for (const rA of arr) for (const r of rA) result[r.id] = r.mc;
     return result;
 }

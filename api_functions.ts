@@ -1,7 +1,7 @@
 import {equals} from "jsr:@std/bytes";
 import {createCanvas, loadImage} from "jsr:@gfx/canvas-wasm";
 import {testData} from './lookups.ts';
-import {xy, latLon, rawDatum, target, result, retObj, reqStat, tileCache, rawCity, cities, changeLog} from "./types.ts";
+import {geoPoint, rawInput, processedInput, baseResult, resultMap, requestStats, tileCache, rawCity, cities, changeLog} from "./types.ts";
 import {mercator, genTileKey, validateBorder} from "./geo_functions.ts";
 import {loadRemoteJSON, isValidTileKey, encodeTile, makeUrl, decodeTile, formatResult} from "./utils.ts";
 
@@ -23,7 +23,7 @@ const masterCities: cities = await (async () => {
     return Object.fromEntries(inp.map(c => [c.i, {p: c.p, n: c.n, la: c.la, lo: c.lo}]));
 })();
 
-export async function handleMcRequest (request: Request, thisReq: reqStat): Promise<Response> {
+export async function handleMcRequest (request: Request, thisReq: requestStats): Promise<Response> {
     const reqLim = parseInt(Deno.env.get("reqLim") || "1000000", 10);
     try {
         const inpData: JSON = await request.json();
@@ -40,11 +40,11 @@ export async function handleMcRequest (request: Request, thisReq: reqStat): Prom
         // If there are no requests passed, run test data
         const toRead = inpData.length > 0 ? prepData(inpData) : prepData(testData);
         // Wait for all results, as the read function is per tile
-        const readPromises: Promise<result[]>[] = [];
+        const readPromises: Promise<baseResult[]>[] = [];
         for (const tileKey of Object.keys(toRead)) readPromises.push(readTile(tileKey, toRead[tileKey]));
         // Read and cache the tile data then calculate, format & return results
-        const values: result[][] = await Promise.all(readPromises);
-        const result: retObj = formatResult(values);
+        const values: baseResult[][] = await Promise.all(readPromises);
+        const result: resultMap = formatResult(values);
         thisReq.endTs = Date.now();
         console.log(thisReq);
         return new Response(JSON.stringify(result), {"status": 200, headers: {"content-type": "application/json"}});
@@ -55,7 +55,7 @@ export async function handleMcRequest (request: Request, thisReq: reqStat): Prom
     }
 }
 
-async function readTile (tileKey: string, locations: target[]): Promise<result[]> {
+async function readTile (tileKey: string, locations: processedInput[]): Promise<baseResult[]> {
     if (!mastTileSet.has(tileKey)) return locations.map(t => ({"id": t.id, "mc": ''}));
     let tileData: tileCache;
     const entry = await kv.get<tileCache>(["tile", tileKey]); // Only need to check for the first slice existing
@@ -81,17 +81,17 @@ async function readTile (tileKey: string, locations: target[]): Promise<result[]
     });
 }
 
-function prepData (rawData: rawDatum[]): {[index: string]: target[]} {
+function prepData (rawData: rawInput[]): {[index: string]: processedInput[]} {
     // Project the lat long, calculate the tileKey
     // Return projected values grouped by tileKey
-    const res: {[index: string]: target[]} = {};
+    const res: {[index: string]: processedInput[]} = {};
     for (const d of rawData) {
-        const p: xy = mercator({lat: d.lat, lon: d.lon});
+        const p: [number, number] = mercator({lat: d.lat, lon: d.lon});
         const tileKey: string = genTileKey(p);
         const x = Math.floor(p[0]) % 256;
         const y = Math.floor(p[1]) % 256;
         const cc: string = (d.cc || '').toUpperCase(); // cc is optional in request
-        const thisTarg: target = {id: d.id, x: x, y: y, cc: cc};
+        const thisTarg: processedInput = {id: d.id, x: x, y: y, cc: cc};
         if (res[tileKey]) {
             res[tileKey].push(thisTarg)
         } else {
@@ -202,7 +202,7 @@ export async function handleGithubWebhook (req: Request): Promise<Response> {
                         const trimmedLine = line.slice(1).replace(/,$/, "").trim(); // Remove "+" or "-" and any trailing comma
                         try {
                             const parsedEntry = JSON.parse(trimmedLine);
-                            const loc: latLon = {lat: parsedEntry.la, lon:parsedEntry.lo};
+                            const loc: geoPoint = {lat: parsedEntry.la, lon:parsedEntry.lo};
                             // Project the latitude-longitude pair and generate a tile key
                             const tileKey = genTileKey(mercator(loc));
                             if (isValidTileKey(tileKey)) updatedTileKeys.add(tileKey);
@@ -269,8 +269,12 @@ export async function onStart () {
     const uncachedTiles = Object.entries(cacheStatus)
         .filter(([_k, v]) => v === 0)
         .map(([k, _v]) => k);
-    console.log(uncachedTiles);
-    buildCacheWithDelay(uncachedTiles);
+    if (uncachedTiles.length > 0) {
+        console.log(uncachedTiles);
+        buildCacheWithDelay(uncachedTiles);
+    } else {
+        console.log('All tiles cached, server fully ready');
+    }
 }
 
 // Cache the requested tile data with a delay per tile
@@ -279,7 +283,7 @@ function buildCacheWithDelay (tileKeys: string[]) {
     const intervalId = setInterval(async () => {
         if (index >= tileKeys.length) {
             clearInterval(intervalId); // Stop once all tiles are processed
-            console.log("All tiles have been processed.");
+            console.log("All tiles have been processed, server fully ready");
             return;
         }
         const tileKey = tileKeys[index];

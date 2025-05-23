@@ -1,5 +1,5 @@
 
-import {reqStat} from "./types.ts";
+import {requestStats} from "./types.ts";
 import {handleMcRequest, status, getChangeLog, handleGithubWebhook, onStart} from "./api_functions.ts";
 
 const servePort: number = 3000;
@@ -9,7 +9,7 @@ onStart();
 Deno.serve({port: servePort, hostname: servIP}, (request: Request) => {
     const ip: string = request.headers.get("host") || "";
     const pathName = new URL(request.url).pathname;
-    const thisReq: reqStat = {
+    const thisReq: requestStats = {
         "ip": ip,
         "begTs": Date.now(),
         "reqType": request.method,
@@ -20,7 +20,7 @@ Deno.serve({port: servePort, hostname: servIP}, (request: Request) => {
     if (request.method == "POST") {
         switch (pathName) {
             case "/mc_api":
-                return handleMcRequest (request, thisReq);
+                return handleMcRequest(request, thisReq);
             case "/github-webhook":
                 console.log(thisReq);
                 return handleGithubWebhook(request);
