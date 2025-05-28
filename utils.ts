@@ -39,7 +39,8 @@ export function encodeTile (tileData: Uint8ClampedArray): tileCache {
         tempArr.push(_id);
     }
     const datStr = compress(encodeBase64(new Uint8Array(tempArr)));
-    return {idMap: ids, datStr: datStr};
+    const cachedAt = Date.now();
+    return {idMap: ids, datStr: datStr, cachedAt: cachedAt};
 }
 
 export function decodeTile (tileCache: tileCache): number[] {

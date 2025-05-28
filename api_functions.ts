@@ -1,7 +1,7 @@
 import {equals} from "jsr:@std/bytes";
 import {createCanvas, loadImage} from "jsr:@gfx/canvas-wasm";
 import {testData} from './lookups.ts';
-import {geoPoint, rawInput, processedInput, baseResult, resultMap, requestStats, tileCache, rawCity, cities, changeLog} from "./types.ts";
+import {geoPoint, rawInput, processedInput, baseResult, resultMap, requestStats, tileCache, rawCity, cities, changeLog, PendingDeletions} from "./types.ts";
 import {mercator, genTileKey, validateBorder} from "./geo_functions.ts";
 import {loadRemoteJSON, isValidTileKey, encodeTile, makeUrl, decodeTile, formatResult} from "./utils.ts";
 
@@ -116,54 +116,49 @@ export function status (): string {
 
 export async function getChangeLog (): Promise<Response> {
     // Retrieve the Deno KV change log and return it
-    const tileLog = await kv.get<changeLog>(["changelog", "tiles"]);
+    const tileLog = await buildTileChangeLog();
     const cityLog = await kv.get<changeLog>(["changelog", "cities"]);
-    // Initialise the change log, if it is currently empty
-    if (!tileLog?.value) updateTileChangeLog(new Set());
+    // Initialise the city change log, if it is currently empty
     if (!cityLog?.value) updateCityChangeLog(new Set());
     // Given the endpoint, returning a metro city name : id map as well is useful
     const nameMap: Record<number, string> = Object.fromEntries(Object.entries(masterCities).map(([id, info]) => [Number(id), info.n]));
     const res = {
-        "tiles": tileLog?.value ?? {},
+        "tiles": tileLog ?? {},
         "mcids": cityLog?.value ?? {},
         "names": nameMap
     };
     return new Response(JSON.stringify(res), {"status": 200, headers: {"content-type": "application/json"}});
 }
 
-async function updateTileChangeLog (tileKeysChanged: Set<string>): Promise<boolean> {
-    try {
-        // Build a full version, handle first run, ensure 100 % coverage
-        const newLog: changeLog = Object.fromEntries([...mastTileSet].map(tk => [tk, Date.now()]));
-        const tkCache = await kv.get<changeLog>(["changelog", "tiles"]);
-        if (tkCache.value) { // If the cache hit, handle updates
-            // Apply previous updated timestamps, where the key is not in the updated list
-            for (const [tileKey, updateTS] of Object.entries(tkCache.value)) {
-                if (tileKeysChanged.has(tileKey) === false) {
-                    newLog[tileKey] = updateTS;
-                }
-            }
-        }
-        // Cache the result
-        await kv.set(["changelog", "tiles"], newLog);
-        return true;
+async function buildTileChangeLog (): Promise<Record<string, number>> {
+    const changeLog: Record<string, number> = {};
+    const seenInKV = new Set<string>();
+    for await (const entry of kv.list({prefix: ["tile"]})) {
+        const tileKey = entry.key[1]?.toString();
+        const cache = entry.value as tileCache;
+        const timestamp = cache.cachedAt || 1746086400; // 2025-05-01 09:00:00
+        changeLog[tileKey] = timestamp;
+        seenInKV.add(tileKey);
     }
-    catch (err: unknown) {
-        console.error("Error writing tile change log to Deno KV:", err instanceof Error ? err.message : String(err));
-        return false;
-    }
+    const missingFromKV  = [...mastTileSet].filter(k => !seenInKV.has(k));
+    const unexpectedInKV = [...seenInKV].filter(k => !mastTileSet.has(k));
+    if (missingFromKV.length  > 0) console.warn(`Tiles in mastTileSet but missing in KV: ${JSON.stringify(missingFromKV)}`);
+    if (unexpectedInKV.length > 0) console.warn(`Tiles in KV but not in mastTileSet: ${JSON.stringify(unexpectedInKV)}`);
+    console.log(`Tile change log built with ${Object.keys(changeLog).length} entries`);
+    return changeLog;
 }
 
 async function updateCityChangeLog (metroCityIDsChanged: Set<number>): Promise<boolean> {
     try {
+        console.log(`Updating change log for ${metroCityIDsChanged.size} ${metroCityIDsChanged.size === 1 ? 'city' : 'cities'}: ${JSON.stringify([...metroCityIDsChanged])}`);
         // Build a full version, handle first run, ensure 100 % coverage
         const newLog: changeLog = Object.fromEntries(Object.keys(masterCities).map((id) => [Number(id), Date.now()]));
         const tkCache = await kv.get<changeLog>(["changelog", "cities"]);
         if (tkCache.value) { // If the cache hit, handle updates
             // Apply previous updated timestamps, where the key is not in the updated list
-            for (const [mcid, updateTS] of Object.entries(tkCache.value)) {
-                if (metroCityIDsChanged.has(+mcid) === false) {
-                    newLog[mcid] = updateTS;
+            for (const [metroCityID, updateTS] of Object.entries(tkCache.value)) {
+                if (metroCityIDsChanged.has(+metroCityID) === false) {
+                    newLog[metroCityID] = updateTS;
                 }
             }
         }
@@ -188,12 +183,24 @@ export async function handleGithubWebhook (req: Request): Promise<Response> {
     console.log("Signature verified, proceeding");
     const payload = JSON.parse(new TextDecoder().decode(body));
     const updatedTileKeys = new Set<string>();
+    let editedCityIds: Set<number> = new Set();
     // Collect updated tiles names from the payload
     for (const commit of payload.commits) {
+        // Additions will run through when they are added to the kv, here we invalidate outdated cache and update the change logs
         for (const file of commit.modified) {
             if (file.startsWith("tiles/") && file.endsWith(".png")) {
                 const tileKey = file.split("/").pop()!.replace(/\.png$/, "");
-                if (isValidTileKey(tileKey)) updatedTileKeys.add(tileKey);
+                if (isValidTileKey(tileKey)) {
+                    updatedTileKeys.add(tileKey);
+                    // Retrieve the affected metro city ids from the kv cache to update in change log
+                    // This does not include the effects of extending a city to new tiles
+                    // That is handled by updating the city changelog when a new tile is read from github and added to the kv
+                    const entry = await kv.get<tileCache>(["tile", tileKey]);
+                    if (entry.value) {
+                        const cityIds: Set<number> = new Set(entry.value.idMap.slice(1)); // Exclude 0
+                        editedCityIds = editedCityIds.union(cityIds);
+                    }
+                }
             } else if (file === "res/2020cities15k_trimmed.json") {
                 const diffPatch = commit.patch;
                 const diffLines = diffPatch.split("\n");
@@ -225,13 +232,12 @@ export async function handleGithubWebhook (req: Request): Promise<Response> {
         }
         // Where a tile is removed, update the city change log for those affected
         // Updated tiles will have metro city change log applied when they are read
-        let editedCityIds: Set<number> = new Set();
         for (const file of commit.removed) {
             if (file.startsWith("tiles/") && file.endsWith(".png")) {
                 const tileKey = file.split("/").pop()!.replace(/\.png$/, "");
                 if (isValidTileKey(tileKey)) {
                     updatedTileKeys.add(tileKey);
-                    // Retrieve the affected metro city ids from the kv cache and update in change log
+                    // Retrieve the affected metro city ids from the kv cache to update in change log
                     const entry = await kv.get<tileCache>(["tile", tileKey]);
                     if (entry.value) {
                         const cityIds: Set<number> = new Set(entry.value.idMap.slice(1)); // Exclude 0
@@ -240,41 +246,43 @@ export async function handleGithubWebhook (req: Request): Promise<Response> {
                 }
             }
         }
-        if (editedCityIds.size > 0) updateCityChangeLog(editedCityIds);
     }
-    // Update the tile change log
-    if (updatedTileKeys.size > 0) updateTileChangeLog(updatedTileKeys);
-    // Schedule cache deletion for updated files after a 10-minute delay
-    for (const tileKey of updatedTileKeys) {
-        setTimeout(async () => {
-            await kv.delete(["tile", tileKey]);
-            console.log(`Cache cleared for updated tile: ${tileKey}`);
-        }, 10 * 60 * 1000);
+    // Update the tile and city change logs
+    if (updatedTileKeys.size > 0) {
+        console.log(`Updating ${updatedTileKeys.size} ${updatedTileKeys.size === 1 ? 'tile' : 'tiles'}: ${JSON.stringify([...updatedTileKeys])}`);
+        // Schedule cache deletion for updated files after a 10-minute delay
+        // As the edge serve may not still be online in ten minutes, use the KV to store the request
+        const deletionRequest: PendingDeletions = {
+            tileKeys: [...updatedTileKeys],
+            notBefore: Date.now() + 10 * 60 * 1000,
+            createdAt: Date.now(),
+            reason: "Webhook push"
+        };
+        // Ask Deno KV to expire the stored values in 10 minutes
+        for (let tileKey of [...updatedTileKeys]) {
+            const entry = await kv.get<tileCache>(["tile", tileKey]);
+            if (entry.value) await kv.set(["tile", tileKey], entry.value, {expireIn: 10 * 60 * 1000});
+        }
+        // Not 100 % this will work though and so additionally use the kv to store deletion requests
+        // As logically multiple commits could be queued, ensure we do not overwrite them, but distinguish them
+        const deletionKey : string = payload.commits[0].id.slice(0, 10);
+        await kv.set(["pendingDeletions", deletionKey], deletionRequest);
+    }
+    if (editedCityIds.size > 0) {
+        console.log(`Calling update city change log for ${editedCityIds.size} cities`);
+        updateCityChangeLog(editedCityIds);
     }
     // Immediate response, not delayed by cache clearing
     return new Response("Webhook processed", {status: 200});
 }
 
 export async function onStart () {
-    // Check that the kv store has good coverage of the tileset
-    const cacheStatus = Object.fromEntries([...mastTileSet].map(k => [k, 0]));
-    try {
-        for await (const entry of kv.list({prefix: ["tile"]})) {
-            const key = entry.key[1].toString();
-            if (mastTileSet.has(key)) cacheStatus[key] = 1; // Mark present
-        }
-    } catch (err: unknown) {
-        console.error("Error accessing Deno KV:", err instanceof Error ? err.message : String(err));
-    }
-    const uncachedTiles = Object.entries(cacheStatus)
-        .filter(([_k, v]) => v === 0)
-        .map(([k, _v]) => k);
-    if (uncachedTiles.length > 0) {
-        console.log(uncachedTiles);
-        buildCacheWithDelay(uncachedTiles);
-    } else {
-        console.log('All tiles cached, server fully ready');
-    }
+    // Check to see if there are any pending deletions which we are allowed to execute at this point in time
+    await processPendingDeletions();
+    // Check that the kv store has all the tiles
+    await checkTilesInKV()
+    // Repeat the above every ten minutes while the server is active
+    periodicOperations();
 }
 
 // Cache the requested tile data with a delay per tile
@@ -315,4 +323,78 @@ async function verifySignature (req: Request, body: Uint8Array): Promise<boolean
     const digest = `sha256=${Array.from(hashArray).map(b => b.toString(16).padStart(2, '0')).join('')}`;
     // Check if the calculated digest matches the GitHub signature
     return equals(new TextEncoder().encode(digest), new TextEncoder().encode(signature));
+}
+
+async function processPendingDeletions (now: number = Date.now()): Promise<void> {
+    const prefix = ["pendingDeletions"];
+    const iter = kv.list<PendingDeletions>({prefix});
+    for await (const entry of iter) {
+        const commitHash = entry.key[1].toString();
+        const deletion = entry.value;
+        if (!deletion || deletion.notBefore > now) continue;
+        const lockKey = ["lock", "pendingDeletions", commitHash];
+        const gotLock = await acquireLock(lockKey);
+        if (!gotLock) {
+            console.log(`Skipping deletion for ${commitHash}, lock held`);
+            continue;
+        }
+        try {
+            console.log(`Processing tile deletions from commit ${commitHash}`);
+            for (const tileKey of deletion.tileKeys) {
+                await kv.delete(["tile", tileKey]);
+                console.log(`Deleted tile ${tileKey}`);
+            }
+            await kv.delete(["pendingDeletions", "byCommit", commitHash]);
+            console.log(`Removed deletion request for commit ${commitHash}`);
+        } finally {
+            await releaseLock(lockKey);
+        }
+    }
+}
+
+async function checkTilesInKV (): Promise<void> {
+    const cacheStatus = Object.fromEntries([...mastTileSet].map(k => [k, 0]));
+    try {
+        for await (const entry of kv.list({prefix: ["tile"]})) {
+            const key = entry.key[1].toString();
+            if (mastTileSet.has(key)) cacheStatus[key] = 1; // Mark present
+        }
+    } catch (err: unknown) {
+        console.error("Error accessing Deno KV:", err instanceof Error ? err.message : String(err));
+    }
+    const uncachedTiles = Object.entries(cacheStatus)
+        .filter(([_k, v]) => v === 0)
+        .map(([k, _v]) => k);
+    if (uncachedTiles.length > 0) {
+        console.log(uncachedTiles);
+        buildCacheWithDelay(uncachedTiles);
+    }
+}
+
+function periodicOperations(): void {
+    setInterval(() => {
+        // Run through any scheduled deletions, not relying on onStart to find them
+        processPendingDeletions().catch((err) => console.error("Error in periodic deletion handler:", err));
+        // Check that kv holds all tile keys and queue tile read where this misses
+        checkTilesInKV().catch((err) => console.error("Error in periodic tile KV checker:", err));
+    }, 10 * 60 * 1000); // Every 10 minutes
+}
+
+async function acquireLock (key: Deno.KvKey): Promise<boolean> {
+    const now = Date.now();
+    const ttl = 10 * 100; // 10s lock
+    const expires = now + ttl;
+    const existing = await kv.get<number>(key);
+    if (existing.value && existing.value > now) return false; // Lock is active
+    const res = await kv.atomic() // Override stale or unclaimed lock
+        .check(existing.versionstamp
+            ? {key, versionstamp: existing.versionstamp}
+            : {key, versionstamp: null})
+        .set(key, expires, {expireIn: ttl})
+        .commit();
+    return res.ok;
+}
+
+async function releaseLock (key: Deno.KvKey): Promise<void> {
+    await kv.delete(key);
 }
