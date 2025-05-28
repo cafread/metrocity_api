@@ -138,7 +138,7 @@ async function buildTileChangeLog (): Promise<Record<string, number>> {
     for await (const entry of kv.list({prefix: ["tile"]})) {
         const tileKey = entry.key[1]?.toString();
         const cache = entry.value as tileCache;
-        const timestamp = cache.cachedAt || 1746086400; // 2025-05-01 09:00:00
+        const timestamp = cache.cachedAt || 1746086400000; // 2025-05-01 09:00:00.000
         changeLog[tileKey] = timestamp;
         seenInKV.add(tileKey);
     }
