@@ -28,21 +28,25 @@ Deno.serve({port: servePort, hostname: servIP}, (request: Request) => {
                 return new Response("Unknown post route", {status: 501});
         }
     } else if (request.method === "GET") {
-        console.log(thisReq);
         switch (pathName) {
             case "/status":
+                console.log(thisReq);
                 return new Response(status(),                                   {"status": 200});
             case "/changelog":
-                return getChangeLog();
+                return getChangeLog(thisReq);
             case "/info":
+                console.log(thisReq);
                 return new Response("https://github.com/cafread/metrocity_api", {"status": 200});
             case "/version":
+                console.log(thisReq);
                 return new Response("Release candidate 1.5",                    {"status": 200});
             default:
+                console.log(thisReq);
                 console.warn("Unknown GET route requested:", pathName);
                 return new Response("Unknown GET route",                        {"status": 501});
         }
     } else {
+        console.log(thisReq);
         return new Response("Request type not accepted", {status: 405});
     }
 });

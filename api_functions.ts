@@ -114,7 +114,7 @@ export function status (): string {
     return msg;
 }
 
-export async function getChangeLog (): Promise<Response> {
+export async function getChangeLog (thisReq: requestStats): Promise<Response> {
     // Retrieve the Deno KV change log and return it
     const tileLog = await buildTileChangeLog();
     const cityLog = await kv.get<changeLog>(["changelog", "cities"]);
@@ -127,6 +127,8 @@ export async function getChangeLog (): Promise<Response> {
         "mcids": cityLog?.value ?? {},
         "names": nameMap
     };
+    thisReq.endTs = Date.now();
+    console.log(thisReq);
     return new Response(JSON.stringify(res), {"status": 200, headers: {"content-type": "application/json"}});
 }
 
@@ -142,8 +144,8 @@ async function buildTileChangeLog (): Promise<Record<string, number>> {
     }
     const missingFromKV  = [...mastTileSet].filter(k => !seenInKV.has(k));
     const unexpectedInKV = [...seenInKV].filter(k => !mastTileSet.has(k));
-    if (missingFromKV.length  > 0) {
-        checkTilesInKV();
+    if (missingFromKV.length > 0) {
+        checkTilesInKV(); // No await, else API risks timeouts
         console.warn(`Tiles in mastTileSet but missing in KV: ${JSON.stringify(missingFromKV)}`);
     }
     if (unexpectedInKV.length > 0) console.warn(`Tiles in KV but not in mastTileSet: ${JSON.stringify(unexpectedInKV)}`);
@@ -347,7 +349,7 @@ async function processPendingDeletions (now: number = Date.now()): Promise<void>
                 await kv.delete(["tile", tileKey]);
                 console.log(`Deleted tile ${tileKey}`);
             }
-            await kv.delete(["pendingDeletions", "byCommit", commitHash]);
+            await kv.delete(["pendingDeletions", commitHash]);
             console.log(`Removed deletion request for commit ${commitHash}`);
         } finally {
             await releaseLock(lockKey);
@@ -369,7 +371,7 @@ async function checkTilesInKV (): Promise<void> {
         .filter(([_k, v]) => v === 0)
         .map(([k, _v]) => k);
     if (uncachedTiles.length > 0) {
-        console.log(uncachedTiles);
+        console.log('Uncached tiles found', uncachedTiles);
         buildCacheWithDelay(uncachedTiles);
     }
 }
