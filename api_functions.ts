@@ -142,7 +142,10 @@ async function buildTileChangeLog (): Promise<Record<string, number>> {
     }
     const missingFromKV  = [...mastTileSet].filter(k => !seenInKV.has(k));
     const unexpectedInKV = [...seenInKV].filter(k => !mastTileSet.has(k));
-    if (missingFromKV.length  > 0) console.warn(`Tiles in mastTileSet but missing in KV: ${JSON.stringify(missingFromKV)}`);
+    if (missingFromKV.length  > 0) {
+        checkTilesInKV();
+        console.warn(`Tiles in mastTileSet but missing in KV: ${JSON.stringify(missingFromKV)}`);
+    }
     if (unexpectedInKV.length > 0) console.warn(`Tiles in KV but not in mastTileSet: ${JSON.stringify(unexpectedInKV)}`);
     console.log(`Tile change log built with ${Object.keys(changeLog).length} entries`);
     return changeLog;
