@@ -71,6 +71,7 @@ async function readTile (tileKey: string, locations: processedInput[]): Promise<
         kv.set(["tile", tileKey], tileData);
         // Update the change log for each metro city id read - not zero though!
         updateCityChangeLog(new Set(tileData.idMap.slice(1)));
+        updateTileChangeLog(tileKey);
     }
     const mcData = decodeTile(tileData);
     return locations.map(loc => {
@@ -115,15 +116,15 @@ export function status (): string {
 }
 
 export async function getChangeLog (thisReq: requestStats): Promise<Response> {
-    // Retrieve the Deno KV change log and return it
-    const tileLog = await buildTileChangeLog();
-    const cityLog = await kv.get<changeLog>(["changelog", "cities"]);
+    // Retrieve the Deno KV change logs and return them
+    const tileLog = await kv.get<changeLog>(["changelog", "tiles"], {consistency: "eventual"});
+    const cityLog = await kv.get<changeLog>(["changelog", "cities"], {consistency: "eventual"});
     // Initialise the city change log, if it is currently empty
     if (!cityLog?.value) updateCityChangeLog(new Set());
     // Given the endpoint, returning a metro city name : id map as well is useful
     const nameMap: Record<number, string> = Object.fromEntries(Object.entries(masterCities).map(([id, info]) => [Number(id), info.n]));
     const res = {
-        "tiles": tileLog ?? {},
+        "tiles": tileLog?.value ?? {},
         "mcids": cityLog?.value ?? {},
         "names": nameMap
     };
@@ -132,49 +133,75 @@ export async function getChangeLog (thisReq: requestStats): Promise<Response> {
     return new Response(JSON.stringify(res), {"status": 200, headers: {"content-type": "application/json"}});
 }
 
-async function buildTileChangeLog (): Promise<Record<string, number>> {
-    const changeLog: Record<string, number> = {};
-    const seenInKV = new Set<string>();
-    for await (const entry of kv.list({prefix: ["tile"]})) {
-        const tileKey = entry.key[1]?.toString();
-        const cache = entry.value as tileCache;
-        const timestamp = cache.cachedAt || 1746086400000; // 2025-05-01 09:00:00.000
-        changeLog[tileKey] = timestamp;
-        seenInKV.add(tileKey);
-    }
-    const missingFromKV  = [...mastTileSet].filter(k => !seenInKV.has(k));
-    const unexpectedInKV = [...seenInKV].filter(k => !mastTileSet.has(k));
-    if (missingFromKV.length > 0) {
-        checkTilesInKV(); // No await, else API risks timeouts
-        console.warn(`Tiles in mastTileSet but missing in KV: ${JSON.stringify(missingFromKV)}`);
-    }
-    if (unexpectedInKV.length > 0) console.warn(`Tiles in KV but not in mastTileSet: ${JSON.stringify(unexpectedInKV)}`);
-    console.log(`Tile change log built with ${Object.keys(changeLog).length} entries`);
-    return changeLog;
-}
-
-async function updateCityChangeLog (metroCityIDsChanged: Set<number>): Promise<boolean> {
-    try {
-        console.log(`Updating change log for ${metroCityIDsChanged.size} ${metroCityIDsChanged.size === 1 ? 'city' : 'cities'}: ${JSON.stringify([...metroCityIDsChanged])}`);
-        // Build a full version, handle first run, ensure 100 % coverage
-        const newLog: changeLog = Object.fromEntries(Object.keys(masterCities).map((id) => [Number(id), Date.now()]));
-        const tkCache = await kv.get<changeLog>(["changelog", "cities"]);
-        if (tkCache.value) { // If the cache hit, handle updates
-            // Apply previous updated timestamps, where the key is not in the updated list
-            for (const [metroCityID, updateTS] of Object.entries(tkCache.value)) {
-                if (metroCityIDsChanged.has(+metroCityID) === false) {
-                    newLog[metroCityID] = updateTS;
+async function updateTileChangeLog (tileKey: string): Promise<void> {
+    const newLog = Object.fromEntries([...mastTileSet].map(tileKey => [tileKey, 1746086400000])); // 2025-05-01 09:00:00.000
+    newLog[tileKey] = Date.now();
+    // Acquire a lock on the changelog to avoid concurrent writes and data loss
+    const lockKey = ["lock", "changelog", "tiles"];
+    const changelogKey = ["changelog", "tiles"];
+    const maxAttempts = 10;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const gotLock = await acquireLock(lockKey, 1000); // 1 second TTL
+        if (gotLock) {
+            try {
+                const kvLog = await kv.get<Record<string, number>>(changelogKey, {consistency: "strong"});
+                if (kvLog.value) {
+                    for (const [tk, ts] of Object.entries(kvLog.value as changeLog)) {
+                        if (tk != tileKey) newLog[tk] = ts;
+                    }
                 }
+                await kv.set(changelogKey, newLog);
+                console.log(`Tile change log built with ${Object.keys(newLog).length} entries`);
+                const unexpectedInLog = Object.keys(newLog).filter(k => !mastTileSet.has(k));
+                if (unexpectedInLog.length > 0) console.warn(`Tiles in KV but not in mastTileSet: ${JSON.stringify(unexpectedInLog)}`);
+                await releaseLock(lockKey);
+                return;
+            } catch (err) {
+                console.error(`Failed to update tile changelog:`, err);
+                await releaseLock(lockKey);
+                return;
             }
         }
-        // Cache the result
-        await kv.set(["changelog", "cities"], newLog);
-        return true;
+        // Lock not acquired: wait with jitter before retrying
+        const delay = 500 * attempt + Math.random() * 1000;
+        await new Promise(res => setTimeout(res, delay));
     }
-    catch (err: unknown) {
-        console.error("Error writing city change log to Deno KV:", err instanceof Error ? err.message : String(err));
-        return false;
+    console.warn(`Failed to acquire lock on tile changelog after ${maxAttempts} attempts`);
+}
+
+async function updateCityChangeLog (metroCityIDsChanged: Set<number>): Promise<void> {
+    const newLog = Object.fromEntries(Object.keys(masterCities).map((id) => [Number(id), 1746086400000])); // 2025-05-01 09:00:00.000
+    for (const metroCityID of [...metroCityIDsChanged]) newLog[metroCityID] = Date.now();
+    // Acquire a lock on the changelog to avoid concurrent writes and data loss
+    const lockKey = ["lock", "changelog", "cities"];
+    const changelogKey = ["changelog", "cities"];
+    const maxAttempts = 10;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const gotLock = await acquireLock(lockKey, 1000); // 1 second TTL
+        if (gotLock) {
+            try {
+                console.log(`Updating change log for ${metroCityIDsChanged.size} ${metroCityIDsChanged.size === 1 ? 'city' : 'cities'}: ${JSON.stringify([...metroCityIDsChanged])}`);
+                // Read the existing values and apply them where we don't want to apply an update
+                const kvLog = await kv.get<Record<string, number>>(changelogKey, {consistency: "strong"});
+                if (kvLog.value) {
+                    for (const [metroCityID, updateTS] of Object.entries(kvLog.value as changeLog)) {
+                        if (!metroCityIDsChanged.has(Number(metroCityID))) newLog[metroCityID] = updateTS;
+                    }
+                }
+                await kv.set(changelogKey, newLog);
+                await releaseLock(lockKey);
+                return;
+            } catch (err) {
+                console.error("Error writing city change log to Deno KV:", err instanceof Error ? err.message : String(err));
+                await releaseLock(lockKey);
+                return;
+            }
+        }
+        // Lock not acquired — wait with jitter before retrying
+        const delay = 500 * attempt + Math.random() * 1000;
+        await new Promise((res) => setTimeout(res, delay));
     }
+    console.warn(`Failed to acquire lock on city changelog after ${maxAttempts} attempts`);
 }
 
 // Helper function to handle incoming GitHub webhook payload
@@ -200,7 +227,7 @@ export async function handleGithubWebhook (req: Request): Promise<Response> {
                     // Retrieve the affected metro city ids from the kv cache to update in change log
                     // This does not include the effects of extending a city to new tiles
                     // That is handled by updating the city changelog when a new tile is read from github and added to the kv
-                    const entry = await kv.get<tileCache>(["tile", tileKey]);
+                    const entry = await kv.get<tileCache>(["tile", tileKey], {consistency: "eventual"});
                     if (entry.value) {
                         const cityIds: Set<number> = new Set(entry.value.idMap.slice(1)); // Exclude 0
                         editedCityIds = editedCityIds.union(cityIds);
@@ -243,7 +270,7 @@ export async function handleGithubWebhook (req: Request): Promise<Response> {
                 if (isValidTileKey(tileKey)) {
                     updatedTileKeys.add(tileKey);
                     // Retrieve the affected metro city ids from the kv cache to update in change log
-                    const entry = await kv.get<tileCache>(["tile", tileKey]);
+                    const entry = await kv.get<tileCache>(["tile", tileKey], {consistency: "eventual"});
                     if (entry.value) {
                         const cityIds: Set<number> = new Set(entry.value.idMap.slice(1)); // Exclude 0
                         editedCityIds = editedCityIds.union(cityIds);
@@ -264,8 +291,8 @@ export async function handleGithubWebhook (req: Request): Promise<Response> {
             reason: "Webhook push"
         };
         // Ask Deno KV to expire the stored values in 10 minutes
-        for (let tileKey of [...updatedTileKeys]) {
-            const entry = await kv.get<tileCache>(["tile", tileKey]);
+        for (const tileKey of [...updatedTileKeys]) {
+            const entry = await kv.get<tileCache>(["tile", tileKey], {consistency: "eventual"});
             if (entry.value) await kv.set(["tile", tileKey], entry.value, {expireIn: 10 * 60 * 1000});
         }
         // Not 100 % this will work though and so additionally use the kv to store deletion requests
@@ -385,9 +412,9 @@ function periodicOperations(): void {
     }, 10 * 60 * 1000); // Every 10 minutes
 }
 
-async function acquireLock (key: Deno.KvKey): Promise<boolean> {
+async function acquireLock (key: Deno.KvKey, ttl?: number): Promise<boolean> {
+    ttl = ttl || 10 * 100; // 10s lock as a default
     const now = Date.now();
-    const ttl = 10 * 100; // 10s lock
     const expires = now + ttl;
     const existing = await kv.get<number>(key);
     if (existing.value && existing.value > now) return false; // Lock is active
