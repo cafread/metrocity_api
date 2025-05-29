@@ -234,9 +234,7 @@ export async function handleGithubWebhook (req: Request): Promise<Response> {
                     }
                 }
             } else if (file === "res/2020cities15k_trimmed.json") {
-                const diffPatch = commit.patch;
-                const diffLines = diffPatch.split("\n");
-                for (const line of diffLines) {
+                for (const line of commit.patch.split("\n")) {
                     if (line.startsWith("+") || line.startsWith("-")) {
                         const trimmedLine = line.slice(1).replace(/,$/, "").trim(); // Remove "+" or "-" and any trailing comma
                         try {
@@ -251,12 +249,9 @@ export async function handleGithubWebhook (req: Request): Promise<Response> {
                     }
                 }
             } else if (file === "res/masTileKeys.json") {
-                const diffPatch = commit.patch;
-                const diffLines = diffPatch.split("\n");
-                for (const line of diffLines) {
+                for (const line of commit.patch.split("\n")) {
                     if (line.startsWith("+") || line.startsWith("-")) {
-                        const trimmedLine = line.slice(1).replace(/,$/, "").trim(); // Remove "+" or "-"
-                        const tileKey = trimmedLine;
+                        const tileKey = line.slice(1).replace(/,$/, "").trim(); // Remove "+" or "-"
                         if (isValidTileKey(tileKey)) updatedTileKeys.add(tileKey);
                     }
                 }
@@ -283,19 +278,19 @@ export async function handleGithubWebhook (req: Request): Promise<Response> {
     if (updatedTileKeys.size > 0) {
         console.log(`Updating ${updatedTileKeys.size} ${updatedTileKeys.size === 1 ? 'tile' : 'tiles'}: ${JSON.stringify([...updatedTileKeys])}`);
         // Schedule cache deletion for updated files after a 10-minute delay
-        // As the edge serve may not still be online in ten minutes, use the KV to store the request
+        // Ask Deno KV to expire the stored values in 10 minutes
+        for (const tileKey of [...updatedTileKeys]) {
+            const entry = await kv.get<tileCache>(["tile", tileKey], {consistency: "eventual"});
+            if (entry.value) await kv.set(["tile", tileKey], entry.value, {expireIn: 10 * 60 * 1000});
+        }
+        // Not 100 % expiration will work consistently as kv is still not 'stable', so additionally use the kv to store deletion requests
+        // The edge server cannot be assumed to still be online in ten minutes, use the KV to store the request
         const deletionRequest: PendingDeletions = {
             tileKeys: [...updatedTileKeys],
             notBefore: Date.now() + 10 * 60 * 1000,
             createdAt: Date.now(),
             reason: "Webhook push"
         };
-        // Ask Deno KV to expire the stored values in 10 minutes
-        for (const tileKey of [...updatedTileKeys]) {
-            const entry = await kv.get<tileCache>(["tile", tileKey], {consistency: "eventual"});
-            if (entry.value) await kv.set(["tile", tileKey], entry.value, {expireIn: 10 * 60 * 1000});
-        }
-        // Not 100 % this will work though and so additionally use the kv to store deletion requests
         // As logically multiple commits could be queued, ensure we do not overwrite them, but distinguish them
         const deletionKey : string = payload.commits[0].id.slice(0, 10);
         await kv.set(["pendingDeletions", deletionKey], deletionRequest);
@@ -313,8 +308,6 @@ export async function onStart () {
     await processPendingDeletions();
     // Check that the kv store has all the tiles
     await checkTilesInKV()
-    // Repeat the above every ten minutes while the server is active
-    periodicOperations();
 }
 
 // Cache the requested tile data with a delay per tile
@@ -357,7 +350,7 @@ async function verifySignature (req: Request, body: Uint8Array): Promise<boolean
     return equals(new TextEncoder().encode(digest), new TextEncoder().encode(signature));
 }
 
-async function processPendingDeletions (now: number = Date.now()): Promise<void> {
+export async function processPendingDeletions (now: number = Date.now()): Promise<void> {
     const prefix = ["pendingDeletions"];
     const iter = kv.list<PendingDeletions>({prefix});
     for await (const entry of iter) {
@@ -384,7 +377,7 @@ async function processPendingDeletions (now: number = Date.now()): Promise<void>
     }
 }
 
-async function checkTilesInKV (): Promise<void> {
+export async function checkTilesInKV (): Promise<void> {
     const cacheStatus = Object.fromEntries([...mastTileSet].map(k => [k, 0]));
     try {
         for await (const entry of kv.list({prefix: ["tile"]})) {
@@ -401,15 +394,6 @@ async function checkTilesInKV (): Promise<void> {
         console.log('Uncached tiles found', uncachedTiles);
         buildCacheWithDelay(uncachedTiles);
     }
-}
-
-function periodicOperations(): void {
-    setInterval(() => {
-        // Run through any scheduled deletions, not relying on onStart to find them
-        processPendingDeletions().catch((err) => console.error("Error in periodic deletion handler:", err));
-        // Check that kv holds all tile keys and queue tile read where this misses
-        checkTilesInKV().catch((err) => console.error("Error in periodic tile KV checker:", err));
-    }, 10 * 60 * 1000); // Every 10 minutes
 }
 
 async function acquireLock (key: Deno.KvKey, ttl?: number): Promise<boolean> {

@@ -1,6 +1,14 @@
 
 import {requestStats} from "./types.ts";
-import {handleMcRequest, status, getChangeLog, handleGithubWebhook, onStart} from "./api_functions.ts";
+import {
+    handleMcRequest,
+    status,
+    getChangeLog,
+    handleGithubWebhook,
+    onStart,
+    checkTilesInKV,
+    processPendingDeletions
+} from "./api_functions.ts";
 
 const servePort: number = 3000;
 const servIP: string = "0.0.0.0";
@@ -49,4 +57,11 @@ Deno.serve({port: servePort, hostname: servIP}, (request: Request) => {
         console.log(thisReq);
         return new Response("Request type not accepted", {status: 405});
     }
+});
+
+Deno.cron("Deletions and KV miss check", {minute: {every: 10}}, () => {
+    // Run through any scheduled deletions, not relying on onStart to find them
+    processPendingDeletions().catch((err) => console.error("Error in periodic deletion handler:", err));
+    // Check that kv holds all tile keys and queue tile read where this misses
+    checkTilesInKV().catch((err) => console.error("Error in periodic tile KV checker:", err));
 });
