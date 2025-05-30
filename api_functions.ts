@@ -380,7 +380,7 @@ export async function processPendingDeletions (now: number = Date.now()): Promis
 export async function checkTilesInKV (): Promise<void> {
     const cacheStatus = Object.fromEntries([...mastTileSet].map(k => [k, 0]));
     try {
-        for await (const entry of kv.list({prefix: ["tile"]})) {
+        for await (const entry of kv.list({prefix: ["tile"]}, {consistency: "eventual"})) {
             const key = entry.key[1].toString();
             if (mastTileSet.has(key)) cacheStatus[key] = 1; // Mark present
         }

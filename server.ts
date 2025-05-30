@@ -62,6 +62,4 @@ Deno.serve({port: servePort, hostname: servIP}, (request: Request) => {
 Deno.cron("Deletions and KV miss check", {hour: {every: 1}}, () => {
     // Run through any scheduled deletions, not relying on onStart to find them
     processPendingDeletions().catch((err) => console.error("Error in periodic deletion handler:", err));
-    // Check that kv holds all tile keys and queue tile read where this misses
-    checkTilesInKV().catch((err) => console.error("Error in periodic tile KV checker:", err));
 });
