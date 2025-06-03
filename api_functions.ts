@@ -353,6 +353,10 @@ async function verifySignature (req: Request, body: Uint8Array): Promise<boolean
 export async function processPendingDeletions (now: number = Date.now()): Promise<void> {
     const prefix = ["pendingDeletions"];
     const iter = kv.list<PendingDeletions>({prefix});
+
+    // Trying to figure out why so many kv reads are happening, this should usually result in zero
+    console.log("Pending deletions iter", iter);
+
     for await (const entry of iter) {
         const commitHash = entry.key[1].toString();
         const deletion = entry.value;
