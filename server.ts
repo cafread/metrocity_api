@@ -6,7 +6,6 @@ import {
     getChangeLog,
     handleGithubWebhook,
     onStart,
-    checkTilesInKV,
     processPendingDeletions
 } from "./api_functions.ts";
 
@@ -59,7 +58,7 @@ Deno.serve({port: servePort, hostname: servIP}, (request: Request) => {
     }
 });
 
-Deno.cron("Deletions and KV miss check", {hour: {every: 12}}, () => {
-    // Run through any scheduled deletions, not relying on onStart to find them
+Deno.cron("Deletions and KV miss check", {hour: {every: 48}}, () => {
+    // Occasionally check for missed scheduled deletions, not relying on onStart to find them
     processPendingDeletions().catch((err) => console.error("Error in periodic deletion handler:", err));
 });

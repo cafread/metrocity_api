@@ -307,7 +307,7 @@ export async function onStart () {
     // Check to see if there are any pending deletions which we are allowed to execute at this point in time
     await processPendingDeletions();
     // Check that the kv store has all the tiles
-    await checkTilesInKV()
+    await checkTilesInKV();
 }
 
 // Cache the requested tile data with a delay per tile
