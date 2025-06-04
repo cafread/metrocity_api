@@ -58,7 +58,7 @@ Deno.serve({port: servePort, hostname: servIP}, (request: Request) => {
     }
 });
 
-Deno.cron("Deletions and KV miss check", {hour: {every: 48}}, () => {
+Deno.cron("Deletions and KV miss check", "0 0 * * MON", () => {
     // Occasionally check for missed scheduled deletions, not relying on onStart to find them
     processPendingDeletions().catch((err) => console.error("Error in periodic deletion handler:", err));
 });
