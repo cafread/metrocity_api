@@ -215,6 +215,22 @@ export async function handleGithubWebhook (req: Request): Promise<Response> {
     console.log("Signature verified, proceeding");
     const payload = JSON.parse(new TextDecoder().decode(body));
     const updatedTileKeys = new Set<string>();
+    const allModifiedFiles = new Set<string>();
+    for (const commit of payload.commits) {
+        for (const file of commit.modified) {
+            allModifiedFiles.add(file);
+        }
+    }
+    let diffText: string | null = null;
+    if (allModifiedFiles.has("res/2020cities15k_trimmed.json") || allModifiedFiles.has("res/masTileKeys.json")) {
+        console.log("Diff required, fetching...");
+        const diffResponse = await fetch(payload.compare, {headers: {"Accept": "application/vnd.github.v3.diff"}});
+        if (!diffResponse.ok) {
+            console.error("Failed to fetch diff:", await diffResponse.text());
+            return new Response("Failed to fetch diff", {status: 500});
+        }
+        diffText = await diffResponse.text();
+    }
     let editedCityIds: Set<number> = new Set();
     // Collect updated tiles names from the payload
     for (const commit of payload.commits) {
@@ -233,9 +249,8 @@ export async function handleGithubWebhook (req: Request): Promise<Response> {
                         editedCityIds = editedCityIds.union(cityIds);
                     }
                 }
-            } else if (file === "res/2020cities15k_trimmed.json") {
-                console.log(commit.patch); // To help debug line below
-                for (const line of commit.patch.split("\n")) { // Split is throwing an error, but seems appropriate based on patch
+            } else if (file === "res/2020cities15k_trimmed.json" && diffText != null) { // Rarely changes
+                for (const line of diffText.split("\n")) {
                     if (line.startsWith("+") || line.startsWith("-")) {
                         const trimmedLine = line.slice(1).replace(/,$/, "").trim(); // Remove "+" or "-" and trailing comma
                         try {
@@ -249,10 +264,10 @@ export async function handleGithubWebhook (req: Request): Promise<Response> {
                         }
                     }
                 }
-            } else if (file === "res/masTileKeys.json") {
-                for (const line of commit.patch.split("\n")) {
+            } else if (file === "res/masTileKeys.json" && diffText != null) { // Rarely changes
+                for (const line of diffText.split("\n")) {
                     if (line.startsWith("+") || line.startsWith("-")) {
-                        const tileKey = line.slice(1).replace(/,$/, "").trim(); // Remove "+" or "-"
+                        const tileKey = line.slice(1).replace(/,$/, "").trim(); // Remove "+" or "-" and trailing comma
                         if (isValidTileKey(tileKey)) updatedTileKeys.add(tileKey);
                     }
                 }
