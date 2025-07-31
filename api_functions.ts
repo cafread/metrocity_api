@@ -369,8 +369,10 @@ async function verifySignature (req: Request, body: Uint8Array): Promise<boolean
 export async function processPendingDeletions (now: number = Date.now()): Promise<void> {
     const prefix = ["pendingDeletions"];
     const iter = kv.list<PendingDeletions>({prefix});
+    console.log("Checked for pending deletions");
     for await (const entry of iter) {
         const commitHash = entry.key[1].toString();
+        console.log("Processing pending deletion", commitHash);
         const deletion = entry.value;
         if (!deletion || deletion.notBefore > now) continue;
         const lockKey = ["lock", "pendingDeletions", commitHash];
