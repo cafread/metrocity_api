@@ -234,9 +234,10 @@ export async function handleGithubWebhook (req: Request): Promise<Response> {
                     }
                 }
             } else if (file === "res/2020cities15k_trimmed.json") {
-                for (const line of commit.patch.split("\n")) {
+                console.log(commit.patch); // To help debug line below
+                for (const line of commit.patch.split("\n")) { // Split is throwing an error, but seems appropriate based on patch
                     if (line.startsWith("+") || line.startsWith("-")) {
-                        const trimmedLine = line.slice(1).replace(/,$/, "").trim(); // Remove "+" or "-" and any trailing comma
+                        const trimmedLine = line.slice(1).replace(/,$/, "").trim(); // Remove "+" or "-" and trailing comma
                         try {
                             const parsedEntry = JSON.parse(trimmedLine);
                             const loc: geoPoint = {lat: parsedEntry.la, lon:parsedEntry.lo};
