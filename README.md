@@ -4,7 +4,7 @@ Can respond to one request per call or hundreds of thousands, utilising cache to
 Written in TypeScript for [Deno 2](https://deno.com/blog/v2.0).
 
 ## How to use it
-For testing, an edge service is available: `https://metro-city.deno.dev/`  
+For testing, an edge service is available: `https://metrocity-api.cafread.deno.net/mc_api`  
 `POST` request using the `/mc_api` route.  
 Requires the header `Content-Type: application/json`  
 Request body should be an array with elements `{"id": strInt, "lat": number, "lon": number, "cc"?: string}`  
