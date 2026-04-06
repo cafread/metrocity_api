@@ -1,0 +1,11 @@
+{
+  "unstable": ["kv", "cron"],
+  "permissions": {
+    "net": true,
+    "env": ["reqLim", "auth"]
+  },
+  "imports": {
+    "@gfx/canvas-wasm": "jsr:@gfx/canvas-wasm@^0.4.2",
+    "@std/bytes": "jsr:@std/bytes@^1.0.6"
+  }
+}
