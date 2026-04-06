@@ -11,7 +11,6 @@ import {
 
 const servePort: number = 3000;
 const servIP: string = "0.0.0.0";
-onStart();
 
 Deno.serve({port: servePort, hostname: servIP}, (request: Request) => {
     const ip: string = request.headers.get("host") || "";
@@ -58,7 +57,11 @@ Deno.serve({port: servePort, hostname: servIP}, (request: Request) => {
     }
 });
 
-Deno.cron("Deletions and KV miss check", "0 0 * * MON", () => {
+onStart().catch((err) => {
+    console.error("Critical error during background onStart initialization:", err);
+});
+
+Deno.cron("Deletions and KV miss check", "0 0 * * 1", () => {
     // Occasionally check for missed scheduled deletions, not relying on onStart to find them
     processPendingDeletions().catch((err) => console.error("Error in periodic deletion handler:", err));
 });
