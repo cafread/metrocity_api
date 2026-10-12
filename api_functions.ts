@@ -222,7 +222,7 @@ export async function handleGithubWebhook (req: Request): Promise<Response> {
         }
     }
     let diffText: string | null = null;
-    if (allModifiedFiles.has("res/2020cities15k_trimmed.json") || allModifiedFiles.has("res/masTileKeys.json")) {
+    if (allModifiedFiles.has("res/2020cities15k_trimmed.json") || allModifiedFiles.has("res/mastTileKeys.json")) {
         console.log("Diff required, fetching...");
         const diffResponse = await fetch(payload.compare, {headers: {"Accept": "application/vnd.github.v3.diff"}});
         if (!diffResponse.ok) {
@@ -264,12 +264,24 @@ export async function handleGithubWebhook (req: Request): Promise<Response> {
                         }
                     }
                 }
-            } else if (file === "res/masTileKeys.json" && diffText != null) { // Rarely changes
+            } else if (file === "res/mastTileKeys.json" && diffText != null) { // Rarely changes
+                const added = new Set<string>();
+                const removed = new Set<string>();
                 for (const line of diffText.split("\n")) {
                     if (line.startsWith("+") || line.startsWith("-")) {
-                        const tileKey = line.slice(1).replace(/,$/, "").trim(); // Remove "+" or "-" and trailing comma
-                        if (isValidTileKey(tileKey)) updatedTileKeys.add(tileKey);
+                        const tileKey = line.slice(1).replace(/,$/, "").trim().replace(/"/g, ""); // Remove "+" or "-", trailing comma and quotes
+                        if (isValidTileKey(tileKey)) (line.startsWith("+") ? added : removed).add(tileKey);
                     }
+                }
+                // A key on both sides only moved within the file
+                // Keep this instance's tile list in step, others load the new list when they next start
+                for (const tileKey of removed.difference(added)) {
+                    mastTileSet.delete(tileKey);
+                    updatedTileKeys.add(tileKey);
+                }
+                for (const tileKey of added.difference(removed)) {
+                    mastTileSet.add(tileKey);
+                    updatedTileKeys.add(tileKey);
                 }
             }
         }
