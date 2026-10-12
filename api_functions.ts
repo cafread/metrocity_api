@@ -224,7 +224,9 @@ export async function handleGithubWebhook (req: Request): Promise<Response> {
     let diffText: string | null = null;
     if (allModifiedFiles.has("res/2020cities15k_trimmed.json") || allModifiedFiles.has("res/mastTileKeys.json")) {
         console.log("Diff required, fetching...");
-        const diffResponse = await fetch(payload.compare, {headers: {"Accept": "application/vnd.github.v3.diff"}});
+        // payload.compare is the web page address, which ignores an Accept header and returns HTML
+        // The same address with .diff appended returns the diff as plain text
+        const diffResponse = await fetch(`${payload.compare}.diff`);
         if (!diffResponse.ok) {
             console.error("Failed to fetch diff:", await diffResponse.text());
             return new Response("Failed to fetch diff", {status: 500});
@@ -255,6 +257,9 @@ export async function handleGithubWebhook (req: Request): Promise<Response> {
                         const trimmedLine = line.slice(1).replace(/,$/, "").trim(); // Remove "+" or "-" and trailing comma
                         try {
                             const parsedEntry = JSON.parse(trimmedLine);
+                            // A changed line is a changed city, so stamp it in the change log now
+                            // A rename moves no tile, so waiting for a tile to be re-read would never record it
+                            if (typeof parsedEntry.i === "number") editedCityIds.add(parsedEntry.i);
                             const loc: geoPoint = {lat: parsedEntry.la, lon:parsedEntry.lo};
                             // Project the latitude-longitude pair and generate a tile key
                             const tileKey = genTileKey(mercator(loc));
