@@ -214,6 +214,10 @@ export async function handleGithubWebhook (req: Request): Promise<Response> {
     }
     console.log("Signature verified, proceeding");
     const payload = JSON.parse(new TextDecoder().decode(body));
+    if (payload.ref !== "refs/heads/main" || !Array.isArray(payload.commits)) {
+        console.log(`Ignoring webhook for ${payload.ref ?? "an event that is not a push"}`);
+        return new Response("Ignored, not a push to main", {status: 200});
+    }
     const updatedTileKeys = new Set<string>();
     const allModifiedFiles = new Set<string>();
     for (const commit of payload.commits) {
