@@ -214,8 +214,6 @@ export async function handleGithubWebhook (req: Request): Promise<Response> {
     }
     console.log("Signature verified, proceeding");
     const payload = JSON.parse(new TextDecoder().decode(body));
-    // Tiles and lists are served from main, so only a push to main changes what the API returns
-    // This also skips GitHub's ping event, which has no ref or commits
     if (payload.ref !== "refs/heads/main" || !Array.isArray(payload.commits)) {
         console.log(`Ignoring webhook for ${payload.ref ?? "an event that is not a push"}`);
         return new Response("Ignored, not a push to main", {status: 200});
